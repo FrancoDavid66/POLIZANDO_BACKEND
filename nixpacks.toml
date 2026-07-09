@@ -1,0 +1,17 @@
+providers = ["node", "python"]
+
+[variables]
+NODE_ENV = "production"
+
+[tool.poetry]
+name = "mi_proyecto"
+version = "0.1.0"
+description = "Descripción del proyecto"
+authors = ["Franco Gomez <franco@ejemplo.com>"]
+
+[tool.poetry.dependencies]
+python = "3.13.0"
+django = "4.2.20"
+
+[deploy]
+startCommand = "bash railway_start.sh"

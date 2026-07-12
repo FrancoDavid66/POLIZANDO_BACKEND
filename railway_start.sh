@@ -19,11 +19,6 @@ else
   python3 manage.py migrate
   python3 manage.py collectstatic --noinput
 
-  # 🔍 BLOQUE TEMPORAL - BORRAR DESPUÉS DE REVISAR EL RESULTADO EN LOS LOGS
-  echo "🔍 Chequeo one-off: cruzar asegurados AMCA"
-  python3 manage.py cruzar_asegurados_amca || true
-  # 🔍 FIN BLOQUE TEMPORAL
-
   exec gunicorn seguros_project.wsgi:application \
     --bind 0.0.0.0:$PORT \
     --workers 2 --threads 4 \

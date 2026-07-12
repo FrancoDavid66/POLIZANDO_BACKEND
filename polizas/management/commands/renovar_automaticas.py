@@ -44,11 +44,12 @@ DIAS_GRACIA = 3
 VERDE = "#047857"
 
 # Destinatarios del aviso de renovaciones.
-# Emails: override con env EMAIL_AVISO_RENOVACIONES (separados por coma).
-_EMAILS_DEFAULT = "francodavid_dev@outlook.com,Gomezdamianricardo284@gmail.com"
+# Email:    override con env EMAIL_AVISO_RENOVACIONES (separados por coma).
+_EMAILS_DEFAULT = "francodavid_dev@outlook.com"
 EMAILS_AVISO = [e.strip() for e in os.environ.get("EMAIL_AVISO_RENOVACIONES", _EMAILS_DEFAULT).split(",") if e.strip()]
-# WhatsApp de control.
-WHATSAPP_NUMEROS = ["1164235336", "1161332173"]
+# WhatsApp: override con env WHATSAPP_AVISO_RENOVACIONES (separados por coma).
+_WHATSAPP_DEFAULT = "1164235336"
+WHATSAPP_NUMEROS = [n.strip() for n in os.environ.get("WHATSAPP_AVISO_RENOVACIONES", _WHATSAPP_DEFAULT).split(",") if n.strip()]
 def _oficina_con_whatsapp():
     """
     Id de una oficina activa que tenga credenciales de UltraMsg cargadas (o None).
@@ -101,7 +102,7 @@ def _cuerpo_renovaciones_html(renovadas, hoy):
         <tr>
           <td style="background:{VERDE};padding:24px 32px">
             <p style="margin:0;color:#ffffff;font-size:18px;font-weight:500">Pólizas renovadas</p>
-            <p style="margin:4px 0 0;color:#bbf7d0;font-size:13px">Thames Seguros · {_fmt_fecha(hoy)}</p>
+            <p style="margin:4px 0 0;color:#bbf7d0;font-size:13px">{settings.EMAIL_REMITENTE_NOMBRE} · {_fmt_fecha(hoy)}</p>
           </td>
         </tr>
         <tr>
@@ -126,7 +127,7 @@ def _cuerpo_renovaciones_html(renovadas, hoy):
         </tr>
         <tr>
           <td style="background:#f9fafb;padding:20px 32px;border-top:1px solid #e5e7eb">
-            <p style="margin:0;font-size:12px;color:#9ca3af">Thames Seguros · Generado el {_fmt_fecha(hoy)}</p>
+            <p style="margin:0;font-size:12px;color:#9ca3af">{settings.EMAIL_REMITENTE_NOMBRE} · Generado el {_fmt_fecha(hoy)}</p>
           </td>
         </tr>
       </table>
@@ -150,7 +151,7 @@ def _mensaje_whatsapp_renovaciones(renovadas, hoy):
 
 
 def _enviar_aviso_renovaciones(renovadas, hoy):
-    """Manda el aviso (email a los 2 correos + WhatsApp a los 2 números)."""
+    """Manda el aviso (email + WhatsApp a los destinatarios de control)."""
     if not renovadas:
         return
     n = len(renovadas)

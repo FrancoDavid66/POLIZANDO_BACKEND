@@ -5,12 +5,31 @@ Django settings for seguros_project project.
 from pathlib import Path
 import os
 from urllib.parse import urlparse, unquote
-from datetime import timedelta # 🚀 IMPORTANTE PARA JWT
+from datetime import timedelta  # 🚀 IMPORTANTE PARA JWT
+
+from django.core.exceptions import ImproperlyConfigured  # 🔒 para fallar claro si falta una env var
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# ✅ Actualizada: Llave más larga para evitar el InsecureKeyLengthWarning en JWT
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-thames-seguros-super-secret-key-2026-catan-32chars")
+
+def get_required_env(name: str) -> str:
+    """
+    🔒 Devuelve el valor de la variable de entorno `name`.
+    Si no está seteada (o está vacía) NO hay valor por defecto: corta el
+    arranque con un error claro en vez de caer silenciosamente en una
+    credencial hardcodeada (p. ej. de Thames).
+    """
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        raise ImproperlyConfigured(
+            f"❌ Falta configurar la variable de entorno obligatoria: {name}. "
+            f"Setealá en las variables de entorno de Railway (Polizando)."
+        )
+    return value
+
+
+# ✅ SECRET_KEY: sin valor por defecto. Cada proyecto (Thames / Polizando) tiene el suyo.
+SECRET_KEY = get_required_env("DJANGO_SECRET_KEY")
 
 ALLOWED_HOSTS = (os.getenv("ALLOWED_HOSTS", "*") or "*").split(",")
 ALLOWED_HOSTS = [h.strip() for h in ALLOWED_HOSTS if h.strip()]
@@ -149,17 +168,14 @@ else:
                     }
                 }
             else:
-                # 3) Fallback final: tus DB_*
-                DATABASES = {
-                    'default': {
-                        'ENGINE': 'django.db.backends.postgresql',
-                        'NAME': os.getenv('DB_NAME', 'railway'),
-                        'USER': os.getenv('DB_USER', 'postgres'),
-                        'PASSWORD': os.getenv('DB_PASSWORD', ''),
-                        'HOST': os.getenv('DB_HOST', 'postgres.railway.internal'),
-                        'PORT': os.getenv('DB_PORT', '5432'),
-                    }
-                }
+                # 🔒 SIN fallback hardcodeado. Antes acá había defaults tipo
+                # DB_HOST="postgres.railway.internal", DB_USER="postgres", etc.
+                # que podían hacer que Polizando terminara apuntando a la
+                # infraestructura de Thames sin que nadie lo notara.
+                raise ImproperlyConfigured(
+                    "❌ Falta configurar la base de datos: seteá DATABASE_URL "
+                    "(o PGHOST/PGUSER/PGPASSWORD/PGDATABASE) en Railway (Polizando)."
+                )
 
         # ✅ Ajustes útiles para Railway
         DATABASES['default']['CONN_MAX_AGE'] = int(os.getenv("DB_CONN_MAX_AGE", "60"))
@@ -168,7 +184,7 @@ else:
         }
 
         if not all([DATABASES['default'].get('NAME'), DATABASES['default'].get('USER')]):
-            raise ValueError("❗ Faltan variables de entorno críticas para la base de datos")
+            raise ImproperlyConfigured("❗ Faltan variables de entorno críticas para la base de datos")
     except Exception as e:
         print(f"🚨 Error en la configuración de la base de datos: {e}")
         raise
@@ -198,6 +214,8 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
+# ⚠️ Sin tocar: sigue apuntando al front de Thames. Cuando exista el repo/dominio
+# del front de Polizando, avisame y lo actualizamos (no lo adiviné).
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
@@ -245,27 +263,20 @@ SIMPLE_JWT = {
 }
 
 # ── Mensajería / Cobranza (UltraMsg + alias de cobro) ─────────────────────────
-ULTRAMSG_INSTANCE_ID = os.getenv("ULTRAMSG_INSTANCE_ID", "")
-ULTRAMSG_TOKEN = os.getenv("ULTRAMSG_TOKEN", "")
+# 🔒 El instance ID / token de UltraMsg NO van acá. En Polizando se cargan por
+# oficina en el modelo usuarios.Oficina (campos ultramsg_instance_id /
+# ultramsg_token, se editan desde el admin) — no hay una cantidad fija de
+# oficinas ni credenciales por env var. Ver notificaciones/utils/ultramsg.py.
 ULTRAMSG_DEFAULT_CC = os.getenv("ULTRAMSG_DEFAULT_CC", "54")  # Argentina
 ULTRAMSG_TIMEOUT = int(os.getenv("ULTRAMSG_TIMEOUT", "12"))
 ULTRAMSG_SIMULATE = os.getenv("ULTRAMSG_SIMULATE", "false").lower() == "true"
 
-# ✅ Credenciales por oficina
-ULTRAMSG_OFICINA_1_INSTANCE_ID = os.getenv("ULTRAMSG_OFICINA_1_INSTANCE_ID", "instance117665")
-ULTRAMSG_OFICINA_1_TOKEN = os.getenv("ULTRAMSG_OFICINA_1_TOKEN", "xa1uqe7gmz9uwuim")
+ALIAS_CBU = get_required_env("ALIAS_CBU")
 
-ULTRAMSG_OFICINA_2_INSTANCE_ID = os.getenv("ULTRAMSG_OFICINA_2_INSTANCE_ID", "instance154711")
-ULTRAMSG_OFICINA_2_TOKEN = os.getenv("ULTRAMSG_OFICINA_2_TOKEN", "inamppy2y6depv5z")
-
-ULTRAMSG_OFICINA_3_INSTANCE_ID = os.getenv("ULTRAMSG_OFICINA_3_INSTANCE_ID", "instance156893")
-ULTRAMSG_OFICINA_3_TOKEN = os.getenv("ULTRAMSG_OFICINA_3_TOKEN", "k71zxdbqqxultdc5")
-
-# 🚀 NUEVA INSTANCIA 4: Home Office - Ventas
-ULTRAMSG_OFICINA_4_INSTANCE_ID = os.getenv("ULTRAMSG_OFICINA_4_INSTANCE_ID", "instance171359")
-ULTRAMSG_OFICINA_4_TOKEN = os.getenv("ULTRAMSG_OFICINA_4_TOKEN", "ez0cz6q7kiucqryo")
-
-ALIAS_CBU = os.getenv("ALIAS_CBU", "starkeseguros.mp")
+# 🔒 pagos/utils/medios.py usa esto para el texto "(a nombre de {titular})" en los
+# mensajes de cobro. Sin esta línea, ese archivo cae en su propio default hardcodeado
+# ("Estudio Thames") porque no encuentra el atributo en settings.
+COBRO_TITULAR_NOMBRE = get_required_env("COBRO_TITULAR_NOMBRE")
 
 # ── Flags de Solicitudes ─────────────────────────────────────────────────────
 SOLICITUDES_AUTO_REPLICAR = True
@@ -273,22 +284,28 @@ SOLICITUDES_SOBREESCRIBIR_DOCS_CLIENTE = True
 SOLICITUDES_AUTO_SET_FOTO_PERFIL = True
 SOLICITUDES_SOBREESCRIBIR_FOTO_PERFIL = True
 
-ULTRAMSG_BALANCE_PHONE = os.getenv("ULTRAMSG_BALANCE_PHONE", "1164235336")
+ULTRAMSG_BALANCE_PHONE = get_required_env("ULTRAMSG_BALANCE_PHONE")
 
-# ── Email (SMTP Outlook / Office 365) ─────────────────────────────────────────
-# En desarrollo usamos las credenciales de prueba hardcodeadas.
-# En producción Railway inyecta las variables de entorno.
-EMAIL_BACKEND       = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp.gmail.com"
-EMAIL_PORT          = 587
-EMAIL_USE_TLS       = True
-EMAIL_USE_SSL       = False
-EMAIL_HOST_USER     = os.getenv("EMAIL_HOST_USER", "estudiointegralthames@gmail.com")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "xeve fain fpel eomu")
-DEFAULT_FROM_EMAIL  = os.getenv("EMAIL_HOST_USER", "estudiointegralthames@gmail.com")
+# ── Email (SMTP) ───────────────────────────────────────────────────────────────
+# 🔕 DESACTIVADO: Polizando no usa email. Si en algún momento hace falta,
+# descomentá este bloque y cargá las 4 variables en Railway.
+# EMAIL_BACKEND       = "django.core.mail.backends.smtp.EmailBackend"
+# EMAIL_HOST          = get_required_env("EMAIL_HOST")
+# EMAIL_PORT          = 587
+# EMAIL_USE_TLS       = True
+# EMAIL_USE_SSL       = False
+# EMAIL_HOST_USER     = get_required_env("EMAIL_HOST_USER")
+# EMAIL_HOST_PASSWORD = get_required_env("EMAIL_HOST_PASSWORD")
+# DEFAULT_FROM_EMAIL  = EMAIL_HOST_USER
+# EMAIL_REMITENTE_NOMBRE = get_required_env("EMAIL_REMITENTE_NOMBRE")
 
-# Nombre que aparece en el cuerpo del email como remitente
-EMAIL_REMITENTE_NOMBRE = os.getenv("EMAIL_REMITENTE_NOMBRE", "Thames Seguros")
+# Placeholders vacíos (NO son de Thames): si algún management command viejo
+# todavía intenta mandar un email, esto lo hace fallar limpio (sin servidor
+# configurado) en vez de usar credenciales de Thames o tirar AttributeError.
+EMAIL_HOST_USER = ""
+EMAIL_HOST_PASSWORD = ""
+DEFAULT_FROM_EMAIL = ""
+EMAIL_REMITENTE_NOMBRE = ""
 
 # ── TIP: para desarrollo sin mandar emails reales, reemplazá EMAIL_BACKEND por:
 # EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"

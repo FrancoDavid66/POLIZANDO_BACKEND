@@ -23,9 +23,10 @@ from notificaciones.utils.mensajeria import enviar_whatsapp
 
 logger = logging.getLogger(__name__)
 
-_EMAILS_DEFAULT = "francodavid_dev@outlook.com,gomezdamianricardo284@gmail.com"
+_EMAILS_DEFAULT = "francodavid_dev@outlook.com"
 EMAILS_AVISO = [e.strip() for e in os.environ.get("EMAIL_AVISO_RECAUDACION", _EMAILS_DEFAULT).split(",") if e.strip()]
-WHATSAPP_NUMEROS = ["1164235336", "1161332173"]
+_WHATSAPP_DEFAULT = "1164235336"
+WHATSAPP_NUMEROS = [n.strip() for n in os.environ.get("WHATSAPP_AVISO_RECAUDACION", _WHATSAPP_DEFAULT).split(",") if n.strip()]
 
 INDIGO = "#4338ca"
 
@@ -126,7 +127,7 @@ def _email_html(filas, t_ing, t_egr, t_neto, fecha_txt):
     <table width="620" cellpadding="0" cellspacing="0" align="center" style="background:#fff;border-radius:8px;border:1px solid #e5e7eb;overflow:hidden">
       <tr><td style="background:{INDIGO};padding:24px 32px">
         <p style="margin:0;color:#fff;font-size:18px;font-weight:500">Recaudación del día</p>
-        <p style="margin:4px 0 0;color:#c7d2fe;font-size:13px">Thames Seguros · {fecha_txt}</p>
+        <p style="margin:4px 0 0;color:#c7d2fe;font-size:13px">{settings.EMAIL_REMITENTE_NOMBRE} · {fecha_txt}</p>
       </td></tr>
 
       <tr><td style="padding:24px 32px 8px">
@@ -162,7 +163,7 @@ def _email_html(filas, t_ing, t_egr, t_neto, fecha_txt):
       </td></tr>
 
       <tr><td style="background:#f9fafb;padding:20px 32px;border-top:1px solid #e5e7eb">
-        <p style="margin:0;font-size:12px;color:#9ca3af">Thames Seguros · Generado el {fecha_txt}</p>
+        <p style="margin:0;font-size:12px;color:#9ca3af">{settings.EMAIL_REMITENTE_NOMBRE} · Generado el {fecha_txt}</p>
       </td></tr>
     </table>
   </td></tr></table>

@@ -26,14 +26,16 @@ from notificaciones.utils.mensajeria import enviar_whatsapp
 logger = logging.getLogger(__name__)
 
 # Email del resumen (override: env EMAIL_RESUMEN_RECORDATORIOS, separado por coma)
-_EMAILS_DEFAULT = "francodavid_dev@outlook.com,gomezdamianricardo284@gmail.com"
+_EMAILS_DEFAULT = "francodavid_dev@outlook.com"
 EMAILS_RESUMEN = [e.strip() for e in os.environ.get("EMAIL_RESUMEN_RECORDATORIOS", _EMAILS_DEFAULT).split(",") if e.strip()]
 
-OFICINA_NOMBRES = {"1": "5 Esquinas", "2": "Axion", "3": "Km 39", "4": "Talita"}
+# 🔒 Sin mapeo hardcodeado de oficinas: el nombre sale siempre de la DB
+# (usuarios.Oficina). Si no lo encuentra ahí, usa "Oficina {id}" genérico.
+OFICINA_NOMBRES = {}
 
-# Números que reciben el resumen por WhatsApp (vos + Damián).
+# Números que reciben el resumen por WhatsApp.
 # Override: env WHATSAPP_RESUMEN_NUMEROS (separado por coma).
-_WA_DEFAULT = "1164235336,1161332173"
+_WA_DEFAULT = "1164235336"
 WHATSAPP_RESUMEN_NUMEROS = [n.strip() for n in os.environ.get("WHATSAPP_RESUMEN_NUMEROS", _WA_DEFAULT).split(",") if n.strip()]
 
 
@@ -154,7 +156,7 @@ def _email_html(fecha_txt, por_oficina, total):
         '<table width="640" cellpadding="0" cellspacing="0" align="center" style="background:#fff;border-radius:10px;border:1px solid #e2e8f0;overflow:hidden">'
         '<tr><td style="background:#4f46e5;padding:22px 28px">'
         '<p style="margin:0;color:#fff;font-size:18px;font-weight:600">Recordatorios enviados</p>'
-        f'<p style="margin:4px 0 0;color:#c7d2fe;font-size:13px">Thames Seguros · {fecha_txt} · {total} mensajes en total</p>'
+        f'<p style="margin:4px 0 0;color:#c7d2fe;font-size:13px">{settings.EMAIL_REMITENTE_NOMBRE} · {fecha_txt} · {total} mensajes en total</p>'
         '</td></tr>'
         f'<tr><td style="padding:24px 28px">{bloques}{sin_tel_html}</td></tr>'
         '<tr><td style="background:#f8fafc;padding:16px 28px;border-top:1px solid #e2e8f0">'
@@ -244,7 +246,7 @@ class Command(BaseCommand):
                 logger.error(f"[recordatorios] Email-resumen falló: {e}")
                 self.stdout.write(self.style.ERROR(f"✉️  Email falló: {e}"))
 
-        # ── Resumen corto por WhatsApp (vos + Damián) ──────────────────
+        # ── Resumen corto por WhatsApp ──────────────────────────────────
         if WHATSAPP_RESUMEN_NUMEROS:
             total_no = sum(len(i.get("no_enviados", [])) for i in por_oficina.values())
             msg_wa = _mensaje_whatsapp_resumen(fecha_txt, por_oficina, total, total_no)

@@ -46,18 +46,22 @@ OBS_BAJA = "Dada de baja automática por falta de pago"
 # el backlog viejo y se tolera que el cron no corra algún día (finde/feriado/falla).
 VENTANA_EXTRA_DIAS = 2
 
-# Emails del dueño para el aviso de "se dieron de baja X pólizas".
-# Fijos acá (varios separados por coma). Se pueden sobreescribir con la
-# variable de entorno EMAIL_AVISO_BAJAS sin tocar el código.
-_EMAILS_AVISO_DEFAULT = "francodavid_dev@outlook.com, nicolasguerrero@organizacionng.com"
+# Email del dueño para el aviso de "se dieron de baja X pólizas".
+# Se puede sobreescribir con la variable de entorno EMAIL_AVISO_BAJAS sin tocar el código.
+_EMAILS_AVISO_DEFAULT = "francodavid_dev@outlook.com"
 EMAILS_AVISO = [
     e.strip()
     for e in os.environ.get("EMAIL_AVISO_BAJAS", _EMAILS_AVISO_DEFAULT).split(",")
     if e.strip() and "@" in e
 ]
 
-# Números de WhatsApp para el aviso interno (los mismos del cierre de caja).
-WHATSAPP_NUMEROS = ["1164235336", "1161332173"]
+# Números de WhatsApp para el aviso interno. Override: env WHATSAPP_AVISO_BAJAS (coma).
+_WHATSAPP_AVISO_DEFAULT = "1164235336"
+WHATSAPP_NUMEROS = [
+    n.strip()
+    for n in os.environ.get("WHATSAPP_AVISO_BAJAS", _WHATSAPP_AVISO_DEFAULT).split(",")
+    if n.strip()
+]
 
 
 def _oficina_con_whatsapp():
@@ -115,7 +119,7 @@ def _generar_pdf(compania, polizas, fecha):
     elementos = []
     elementos.append(Paragraph("Reporte de bajas", h_title))
     elementos.append(Paragraph(
-        f"Thames Seguros &nbsp;·&nbsp; {compania} &nbsp;·&nbsp; {fecha.strftime('%d/%m/%Y')}",
+        f"{settings.EMAIL_REMITENTE_NOMBRE} &nbsp;·&nbsp; {compania} &nbsp;·&nbsp; {fecha.strftime('%d/%m/%Y')}",
         h_sub,
     ))
     elementos.append(Paragraph(
@@ -243,7 +247,7 @@ def _cuerpo_html(compania, polizas, fecha, titulo="Reporte de bajas", mensaje=ME
         </tr>
         <tr>
           <td style="background:#f9fafb;padding:20px 32px;border-top:1px solid #e5e7eb">
-            <p style="margin:0;font-size:12px;color:#9ca3af">Thames Seguros · Generado el {fecha.strftime('%d/%m/%Y')}</p>
+            <p style="margin:0;font-size:12px;color:#9ca3af">{settings.EMAIL_REMITENTE_NOMBRE} · Generado el {fecha.strftime('%d/%m/%Y')}</p>
           </td>
         </tr>
       </table>

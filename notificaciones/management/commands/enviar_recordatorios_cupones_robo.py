@@ -20,6 +20,7 @@ import os
 from collections import defaultdict
 from datetime import timedelta
 
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
@@ -28,8 +29,17 @@ from notificaciones.utils.mensajeria import enviar_whatsapp
 
 logger = logging.getLogger(__name__)
 
-# URL del frontend para armar el link del portal (override por env FRONTEND_URL).
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://bd-thames-frontend.vercel.app").rstrip("/")
+# URL del frontend para armar el link del portal.
+# 🔒 Sin default: cada proyecto (Thames / Polizando) tiene que apuntar al SUYO.
+# Antes esto caía en el front de Thames si faltaba la env var — ahora el
+# comando no arranca en vez de mandarle al cliente el link de otro proyecto.
+FRONTEND_URL = os.environ.get("FRONTEND_URL")
+if not FRONTEND_URL:
+    raise ImproperlyConfigured(
+        "❌ Falta la variable de entorno FRONTEND_URL (URL del front de Polizando). "
+        "Setealá en Railway antes de correr este comando."
+    )
+FRONTEND_URL = FRONTEND_URL.rstrip("/")
 
 
 def _portal_link(cliente):

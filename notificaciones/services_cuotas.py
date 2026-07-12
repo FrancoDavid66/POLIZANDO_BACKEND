@@ -36,10 +36,14 @@ DISABLE_LOCKS = True
 # 🆕 Venta cruzada: a los N días del pago se ofrece el resto de servicios.
 OFERTA_DIAS_DESPUES_PAGO = 14
 
+# ✅ REACTIVADA: _build_mensaje_oferta() ya no menciona Thames ni ofrece
+# servicios que Polizando no tiene (solo seguros, confirmado por Franco).
+OFERTA_VENTA_CRUZADA_ACTIVA = True
+
 OFICINA_PATTERNS = {
-    "1": ["1", "ofi 1", "ofi1", "(1)", "5 esquinas", "5esquinas", "cinco esquinas"],
-    "2": ["2", "ofi 2", "ofi2", "(2)", "axion"],
-    "3": ["3", "ofi 3", "ofi3", "(3)", "39", "km 39", "kilometro 39", "kilómetro 39"],
+    "1": ["1", "ofi 1", "ofi1", "(1)"],
+    "2": ["2", "ofi 2", "ofi2", "(2)"],
+    "3": ["3", "ofi 3", "ofi3", "(3)"],
 }
 
 
@@ -368,12 +372,8 @@ def _build_mensaje_oferta(cliente) -> str:
     nombre = _nombre_cliente(cliente)
     return (
         f"¡Hola {nombre}! 😊 Gracias por estar al día con el seguro de tu auto.\n"
-        "¿Sabías que en *Estudio Thames* te damos una mano en mucho más?\n\n"
-        "📱 *Seguros:* celulares, carteras, bicicletas, hogar y comercio\n"
-        "⚖️ *Abogados:* accidentes, ART, temas de familia, laboral y temas de propiedad, asuntos penales.\n"
-        "📜 *Escribanía:* contratos de compra-venta, cesiones, escrituras.\n"
-        "🚗 *Gestoría del automotor:* trámites para circular más tranquilo.\n"
-        "Transferencias, cédula verde, formularios 08. Te ayudamos a comprar tu auto.\n\n"
+        f"¿Sabías que en *{settings.EMAIL_REMITENTE_NOMBRE}* también aseguramos mucho más?\n\n"
+        "📱 *Seguros:* celulares, carteras, bicicletas, hogar y comercio\n\n"
         "Escribinos y te asesoramos sin compromiso. 🙌"
     )
 
@@ -478,7 +478,10 @@ def enviar_todo(
 
     # 🆕 Venta cruzada a los 14 días del pago (solo flujo automático)
     oficina_norm = _normalize_oficina_bucket(oficina) if oficina not in (None, "", []) else None
-    ofertas_enviadas, ofertas_errores, ofertas_detalles, ofertas_no_env = enviar_ofertas_postpago(hoy, oficina_norm)
+    if OFERTA_VENTA_CRUZADA_ACTIVA:
+        ofertas_enviadas, ofertas_errores, ofertas_detalles, ofertas_no_env = enviar_ofertas_postpago(hoy, oficina_norm)
+    else:
+        ofertas_enviadas, ofertas_errores, ofertas_detalles, ofertas_no_env = 0, [], [], []
 
     return {
         "recordatorios": {

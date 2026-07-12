@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from usuarios.models import Oficina
 from polizas.precios_nre import (
     precio_cuotas_alta_nueva,
     precio_cuotas_renovacion,
@@ -45,6 +46,19 @@ def _bloque(nombre, oficina, hoy):
     }
 
 
+def _oficina_talita():
+    """
+    Devuelve la Oficina real de la base que matchea "Talita" (según la misma
+    regla de precios_nre.es_talita), o None si no existe ninguna.
+    🔒 Antes esto era un string fijo ("EL TALITA"): siempre aparecía el bloque
+    aunque esa oficina no existiera. Ahora sale de la DB, no hardcodeado.
+    """
+    try:
+        return next((o for o in Oficina.objects.filter(activa=True) if es_talita(o)), None)
+    except Exception:
+        return None
+
+
 class PreciosNREView(APIView):
     """GET /api/usuarios/precios-nre/ → precios NRE de hoy según la oficina del usuario."""
     permission_classes = [IsAuthenticated]
@@ -58,10 +72,14 @@ class PreciosNREView(APIView):
 
         bloques = []
         if is_admin:
-            # El admin maneja todas: mostramos el precio general + El Talita aparte
-            # (que es la única que cambia, y solo en auto).
+            # El admin maneja todas: mostramos el precio general y, SOLO SI
+            # existe de verdad una oficina tipo Talita en la base, ese bloque
+            # aparte (es la única que cambia, y solo en auto).
             bloques.append(_bloque("Todas las oficinas", None, hoy))
-            bloques.append(_bloque("El Talita (auto más barato)", "EL TALITA", hoy))
+            oficina_talita = _oficina_talita()
+            if oficina_talita:
+                nombre_talita = oficina_talita.nombre or "Talita"
+                bloques.append(_bloque(f"{nombre_talita} (auto más barato)", oficina_talita, hoy))
         else:
             nombre = getattr(oficina, "nombre", None) or "Tu oficina"
             bloques.append(_bloque(nombre, oficina, hoy))

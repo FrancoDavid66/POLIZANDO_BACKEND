@@ -23,6 +23,7 @@ from django.db.models import (
 )
 from django.db.models.functions import Coalesce
 from django.utils import timezone
+from django.conf import settings
 
 from seguros_project.pagination import LargeResultsSetPagination
 
@@ -620,7 +621,7 @@ class PolizaViewSet(
         vehiculo = f"{marca} {modelo}".strip() or "tu vehículo"
 
         mensaje = (
-            f"¡Hola {nombre}! 👋 Te escribimos de Thames Seguros.\n\n"
+            f"¡Hola {nombre}! 👋 Te escribimos de {settings.EMAIL_REMITENTE_NOMBRE}.\n\n"
             f"Pasaron unos días desde que aseguraste {vehiculo} con nosotros y queríamos "
             f"saber si recibiste bien tu póliza y si tenés alguna duda.\n\n"
             f"Estamos a tu disposición para lo que necesites. ¡Que tengas un excelente día!"

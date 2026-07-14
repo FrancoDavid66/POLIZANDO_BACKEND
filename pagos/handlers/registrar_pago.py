@@ -14,8 +14,17 @@ from pagos.models import Cuota, Pago
 
 import os
 
-# URL del frontend para armar el link del portal (override por env FRONTEND_URL).
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://bd-thames-frontend.vercel.app").rstrip("/")
+from django.core.exceptions import ImproperlyConfigured
+
+# URL del frontend para armar el link del portal.
+# 🔒 Sin default: cada proyecto (Thames / Polizando) tiene que apuntar al SUYO.
+FRONTEND_URL = os.environ.get("FRONTEND_URL")
+if not FRONTEND_URL:
+    raise ImproperlyConfigured(
+        "❌ Falta la variable de entorno FRONTEND_URL (URL del front de Polizando). "
+        "Setealá en Railway antes de correr esto."
+    )
+FRONTEND_URL = FRONTEND_URL.rstrip("/")
 
 
 def _enviar_gracias_portal(poliza):
@@ -65,22 +74,15 @@ def _enviar_gracias_portal(poliza):
         print(f"[gracias_portal] ❌ WhatsApp NO enviado a {tel}: {info}")
 
 
-# 🚀 TRADUCTOR INFALIBLE DE SUCURSALES
+# 🚀 Código de caja de la oficina
 def _obtener_codigo_caja(poliza):
+    """Código de la oficina para el ingreso de caja: usa Oficina.codigo
+    (siempre debería estar seteado); si no, cae en el id como texto."""
     ofi = getattr(poliza, 'oficina', None)
-    if not ofi: return ""
-    
-    # Si la oficina ya tiene un código, lo usamos
-    if hasattr(ofi, 'codigo') and ofi.codigo: 
+    if not ofi:
+        return ""
+    if hasattr(ofi, 'codigo') and ofi.codigo:
         return str(ofi.codigo).strip()
-    
-    # Si es un texto o un ID, lo limpiamos y traducimos
-    s = str(getattr(ofi, 'id', ofi)).strip().lower()
-    
-    if "1" == s or "5 esquinas" in s: return "1"
-    if "2" == s or "axion" in s: return "2"
-    if "3" == s or "39" in s: return "3"
-    
     return str(getattr(ofi, 'id', ofi)).strip()
 
 

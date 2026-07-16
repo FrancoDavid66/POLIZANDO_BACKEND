@@ -10,6 +10,7 @@ from django.db.models import Q, Case, When, IntegerField, Sum
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 
 from django_filters.rest_framework import DjangoFilterBackend
 
@@ -112,7 +113,13 @@ def _expire_constancias():
 class SolicitudSeguroViewSet(viewsets.ModelViewSet):
     queryset = SolicitudSeguro.objects.all().order_by("-creado_en")
     serializer_class = SolicitudSeguroSerializer
-    
+
+    # 🔧 BLOQUEAMOS EL ACCESO LIBRE (Solo usuarios logueados) — antes no estaba
+    # explícito acá y dependía solo del chequeo manual en get_queryset(), que
+    # no cubre create()/update() y podía terminar en un 500 feo en vez de un
+    # 401 limpio para un usuario anónimo.
+    permission_classes = [IsAuthenticated]
+
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ("estado", "cliente_dni", "vehiculo_patente", "responsable", "responsable_empleado", "responsable_nombre")
     search_fields = ("cliente_nombre", "cliente_dni", "vehiculo_patente", "codigo", "responsable", "responsable_nombre")
@@ -431,8 +438,10 @@ class SolicitudSeguroViewSet(viewsets.ModelViewSet):
         W, H = 1240, 1754
         img = Image.new("RGB", (W, H), (255, 255, 255))
         draw = ImageDraw.Draw(img)
-        draw.rectangle([0, 0, W, 160], fill=(31, 41, 55))
-        draw.text((60, 60), "Estudio Thames", fill=(255, 209, 102))
+        # 🔧 Banner con marca de Polizando (antes decía "Estudio Thames" en dorado).
+        #    Verde primario #1F7A4C = (31, 122, 76); texto en crema #F4EFE6 = (244, 239, 230).
+        draw.rectangle([0, 0, W, 160], fill=(31, 122, 76))
+        draw.text((60, 60), "Polizando", fill=(244, 239, 230))
         
         buf = io.BytesIO()
         img.save(buf, format="PNG")
@@ -445,6 +454,7 @@ class SolicitudSeguroViewSet(viewsets.ModelViewSet):
 class SolicitudDocumentoViewSet(viewsets.ModelViewSet):
     queryset = SolicitudDocumento.objects.all().order_by("-creado_en")
     serializer_class = SolicitudDocumentoSerializer
+    permission_classes = [IsAuthenticated]  # 🔧 igual que arriba: antes no estaba explícito
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ("solicitud", "tipo")
     search_fields = ("nombre", "public_id")
@@ -467,6 +477,7 @@ class SolicitudDocumentoViewSet(viewsets.ModelViewSet):
 class EmpleadoViewSet(viewsets.ModelViewSet):
     queryset = Empleado.objects.select_related('oficina').all().order_by("nombre")
     serializer_class = EmpleadoSerializer
+    permission_classes = [IsAuthenticated]  # 🔧 igual que arriba: antes no estaba explícito
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ("activo", "oficina")

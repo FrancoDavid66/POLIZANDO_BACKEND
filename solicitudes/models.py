@@ -17,7 +17,7 @@ class EstadoSolicitud(models.TextChoices):
 
 class MotivoSolicitud(models.TextChoices):
     ALTA_POLIZA = "ALTA_POLIZA", "Alta de póliza"
-    ASISTENCIA_GRUA = "ASISTENCIA_GRUA", "Asistencia de grúa"
+    # 🔧 ASISTENCIA_GRUA se sacó: el feature de Grúas ya no existe en Polizando.
     OTRO = "OTRO", "Otro"
 
 
@@ -106,6 +106,8 @@ class Empleado(models.Model):
     class Meta:
         ordering = ["nombre"]
         # 🔒 Evitamos nombres duplicados dentro de la misma sucursal
+        # (dejado tal cual a pedido — ver nota en la auditoría de Solicitudes
+        # sobre el comportamiento de NULL en unique_together con Postgres)
         unique_together = ('nombre', 'oficina')
 
     def __str__(self):

@@ -2,6 +2,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import PagoViewSet, CuotaViewSet, MedioCobroViewSet
+from .views_duplicados import PagosDuplicadosAPIView
 
 app_name = "pagos"
 
@@ -22,6 +23,12 @@ urlpatterns = [
         "buscar-cliente/",
         PagoViewSet.as_view({"get": "buscar_cliente"}),
         name="pagos-buscar-cliente",
+    ),
+    # 🆕 Auditoría: detección de pagos duplicados (antes existía pero nunca se conectó)
+    path(
+        "auditoria/duplicados/",
+        PagosDuplicadosAPIView.as_view(),
+        name="pagos-auditoria-duplicados",
     ),
     path("", include(router.urls)),
 ]

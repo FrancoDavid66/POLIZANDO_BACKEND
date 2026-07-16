@@ -13,41 +13,32 @@ from clientes.models import Cliente
 from polizas.precios_nre import es_nre, precio_vigente
 
 # ------------------ Helpers oficina ------------------
-
-OFICINAS_MAP = {
-    "1": "5 esquinas (1)",
-    "2": "axion (2)",
-    "3": "kilometro 39 (3)",
-}
-
+# 🔧 Antes esto era una tabla + regex para reconocer "5 esquinas / axion / km 39"
+# (las 3 sucursales de Thames) en cualquier formato de texto. Polizando no tiene
+# sucursales — `Poliza.oficina` es un ForeignKey real a Oficina, así que alcanza
+# con leer sus atributos directamente. Se mantienen los mismos nombres de función
+# para no tener que tocar cada lugar que los llama.
 
 def _normalize_oficina_bucket(raw):
-    s0 = str(raw or "").strip()
-    if not s0:
+    """Devuelve el id de la oficina como string, o "" si no hay oficina."""
+    if raw is None:
         return ""
-    up = s0.upper()
-    if s0 in ("1", "2", "3"):
-        return s0
-    if re.search(r"\bOFI\s*[-_]*\s*1\b", up) or re.search(r"\bOFI1\b", up):
-        return "1"
-    if re.search(r"\bOFI\s*[-_]*\s*2\b", up) or re.search(r"\bOFI2\b", up):
-        return "2"
-    if re.search(r"\bOFI\s*[-_]*\s*3\b", up) or re.search(r"\bOFI3\b", up):
-        return "3"
-    if "(1)" in up: return "1"
-    if "(2)" in up: return "2"
-    if "(3)" in up: return "3"
-    if "5 ESQUINAS" in up: return "1"
-    if "AXION" in up: return "2"
-    if "KILOMETRO 39" in up or re.search(r"\bKM\s*39\b", up) or "KM39" in up: return "3"
-    return ""
+    oid = getattr(raw, "id", None)
+    if oid is not None:
+        return str(oid)
+    s = str(raw).strip()
+    return s if s.isdigit() else ""
 
 
 def _oficina_nombre(raw):
-    b = _normalize_oficina_bucket(raw)
-    if b in OFICINAS_MAP:
-        return OFICINAS_MAP[b]
-    return str(raw).strip() if raw not in (None, "") else ""
+    """Devuelve el nombre real de la oficina (o el valor tal cual si no es un objeto)."""
+    if raw is None:
+        return ""
+    nombre = getattr(raw, "nombre", None)
+    if nombre:
+        return str(nombre).strip()
+    return str(raw).strip()
+
 
 
 def _compania_nombre_robusto(poliza):
@@ -404,7 +395,7 @@ class PagoSerializer(serializers.ModelSerializer):
     registrado_hm = serializers.SerializerMethodField(read_only=True)
     registrado_hm_full = serializers.SerializerMethodField(read_only=True)
 
-    # 🚀 Campos extra para Micaela (verificación)
+    # 🚀 Campos extra para verificación de pagos
     patente = serializers.SerializerMethodField(read_only=True)
     cliente_nombre = serializers.SerializerMethodField(read_only=True)
     compania = serializers.SerializerMethodField(read_only=True)
@@ -423,7 +414,7 @@ class PagoSerializer(serializers.ModelSerializer):
     def get_registrado_hm_full(self, obj):
         return _fmt_full(getattr(obj, "registrado_en", None))
 
-    # 🚀 Getters para Micaela
+    # 🚀 Getters para verificación de pagos
     def get_patente(self, obj):
         return getattr(obj.poliza, "patente", "") if obj.poliza_id else ""
 

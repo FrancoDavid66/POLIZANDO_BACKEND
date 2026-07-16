@@ -12,7 +12,7 @@ from polizas.models import Poliza  # ✅ Import correcto
 log = logging.getLogger(__name__)
 
 # =========================
-# Choices de Verificación (Micaela)
+# Choices de Verificación de pagos
 # =========================
 
 ESTADO_VERIFICACION_CHOICES = [
@@ -21,14 +21,12 @@ ESTADO_VERIFICACION_CHOICES = [
     ("falta_emitir",     "Atención · Falta emitir en compañía"),
     ("pago_post_baja",   "Atención · Pagó después de baja"),
     ("avisar_vendedor",  "Atención · Avisar al vendedor"),
-    ("revisar_mariano",  "Atención · Revisar con Mariano"),
 ]
 
 ESTADOS_ATENCION = {
     "falta_emitir",
     "pago_post_baja",
     "avisar_vendedor",
-    "revisar_mariano",
 }
 
 
@@ -94,7 +92,7 @@ class Pago(models.Model):
     registrado_en_balance = models.BooleanField(default=False)
 
     # =========================
-    # ✅ Verificación de Micaela
+    # ✅ Verificación de pagos
     # =========================
     estado_verificacion = models.CharField(
         max_length=30,
@@ -178,7 +176,7 @@ class Pago(models.Model):
 
     @property
     def requiere_atencion(self) -> bool:
-        """True si el pago está en alguno de los estados de atención de Micaela."""
+        """True si el pago está en alguno de los estados que requieren atención."""
         return self.estado_verificacion in ESTADOS_ATENCION
 
     def __str__(self):
@@ -450,23 +448,6 @@ def _mapear_forma_ingreso_desde_pago(metodo_pago: str) -> str:
         return "efectivo"
     return "transferencia"
 
-# 🚀 TRADUCTOR INFALIBLE DE SUCURSALES
-def _obtener_codigo_caja(poliza):
-    ofi = getattr(poliza, 'oficina', None)
-    if not ofi: return ""
-    
-    # Si la oficina ya tiene un código, lo usamos
-    if hasattr(ofi, 'codigo') and ofi.codigo: 
-        return str(ofi.codigo).strip()
-    
-    # Si es un texto o un ID, lo limpiamos y traducimos
-    s = str(getattr(ofi, 'id', ofi)).strip().lower()
-    
-    if "1" == s or "5 esquinas" in s: return "1"
-    if "2" == s or "axion" in s: return "2"
-    if "3" == s or "39" in s: return "3"
-    
-    return str(getattr(ofi, 'id', ofi)).strip()
 
 
 @receiver(post_save, sender=Pago)

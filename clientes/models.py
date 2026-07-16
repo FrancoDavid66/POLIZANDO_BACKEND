@@ -14,7 +14,11 @@ class Cliente(models.Model):
     apellido = models.CharField(max_length=100)
     telefono = models.CharField(max_length=20)  # guardamos como lo escribe el usuario
     email = models.EmailField(blank=True, null=True)
-    dni_cuit_cuil = models.CharField(max_length=20)
+    # 🔧 FIX: agregamos blank=True — el frontend de edición ya no lo exige
+    # ("ya no es obligatorio según tu lógica"), pero el modelo seguía
+    # rechazándolo. Ahora el serializer (fields = "__all__") hereda la regla
+    # relajada automáticamente, sin tocar serializers.py.
+    dni_cuit_cuil = models.CharField(max_length=20, blank=True)
     direccion = models.TextField(blank=True)
     localidad = models.CharField(max_length=100, blank=True, null=True)
     partido = models.CharField(max_length=100, blank=True, null=True)

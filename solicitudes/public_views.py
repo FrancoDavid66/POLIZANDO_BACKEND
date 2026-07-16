@@ -3,23 +3,33 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from .models import SolicitudSeguro, EstadoSolicitud
 
+# 🔧 Cambios sobre el original:
+#  1) Bug de CSS: "Ubuntu,...ns-serif" -> "Ubuntu,sans-serif" (el "..." rompía
+#     la cadena de fuentes; el navegador la ignoraba y caía directo al default).
+#  2) Colores de marca Polizando en vez de la paleta genérica (verde/ámbar/rojo
+#     sin relación con la marca) — misma idea que ya aplicamos al PNG del
+#     comprobante, porque esta página también la ve el cliente.
 HTML = """
 <!doctype html>
 <meta charset="utf-8">
-<title>Verificación de Solicitud</title>
+<title>Verificación de Solicitud — Polizando</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700&family=Nunito:wght@400;600&display=swap" rel="stylesheet">
 <style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,...ns-serif;background:#0b0b0c;color:#f9fafb;margin:0;padding:40px}
-.card{max-width:720px;margin:0 auto;background:rgba(255,255,255,.06);backdrop-filter:saturate(180%) blur(10px);
-border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:24px}
-.badge{display:inline-block;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);font-size:12px}
-.ok{background:rgba(16,185,129,.18);color:#d1fae5}
-.warn{background:rgba(245,158,11,.18);color:#fde68a}
-.err{background:rgba(239,68,68,.18);color:#fecaca}
-.row{margin:.25rem 0;color:#e5e7eb}
-.h1{font-weight:700;font-size:20px;margin-bottom:.3rem}
-.small{color:#9ca3af;font-size:12px}
+body{{font-family:'Nunito',system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif;background:#3D322A;color:#F4EFE6;margin:0;padding:40px}}
+.card{{max-width:720px;margin:0 auto;background:rgba(244,239,230,.06);backdrop-filter:saturate(180%) blur(10px);
+border:1px solid rgba(244,239,230,.12);border-radius:16px;padding:24px}}
+.brand{{font-family:'Baloo 2',system-ui,sans-serif;font-weight:700;font-size:15px;color:#BCD7C9;letter-spacing:.02em;margin-bottom:10px}}
+.badge{{display:inline-block;padding:6px 10px;border-radius:8px;border:1px solid rgba(244,239,230,.15);font-size:12px}}
+.ok{{background:rgba(31,122,76,.22);color:#BCD7C9}}
+.warn{{background:rgba(226,98,44,.20);color:#F5C8B5}}
+.err{{background:rgba(220,38,38,.20);color:#fecaca}}
+.row{{margin:.25rem 0;color:#F4EFE6}}
+.h1{{font-family:'Baloo 2',system-ui,sans-serif;font-weight:700;font-size:20px;margin-bottom:.3rem;color:#F4EFE6}}
+.small{{color:#BCB2A6;font-size:12px}}
 </style>
 <div class="card">
+  <div class="brand">POLIZANDO</div>
   <div class="h1">Constancia de Solicitud de Seguro (12 h)</div>
   <div class="row"><b>Código:</b> {codigo}</div>
   <div class="row"><b>Cliente:</b> {cliente} — DNI {dni}</div>

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.utils import timezone
 
@@ -34,7 +35,7 @@ class MedioCobroLite:
             # link u otro
             base = f"link de pago: {self.valor}"
         prov = self.proveedor or "Config"
-        titular = self.titular_nombre or "Estudio Thames"
+        titular = self.titular_nombre or "Polizando"
         return f"{base} (a nombre de {titular} — {prov})"
 
 
@@ -44,8 +45,14 @@ def _fallback_from_settings() -> MedioCobroLite:
     - ALIAS_CBU_LIST: CSV de valores (asumimos tipo 'alias', proveedor 'Config')
     - ALIAS_CBU: string único
     - COBRO_TITULAR_NOMBRE: nombre del titular (opcional)
+
+    🔒 Sin defaults inventados: este es el alias/CBU que se le muestra al
+    CLIENTE para que transfiera dinero. Si no hay nada cargado (ni en BD, ni
+    en variables de entorno), esto tiene que fallar fuerte en vez de mostrar
+    un alias que no es tuyo — antes caía en "starkeseguros.mp", un alias de
+    otra empresa.
     """
-    titular = getattr(settings, "COBRO_TITULAR_NOMBRE", os.getenv("COBRO_TITULAR_NOMBRE", "Estudio Thames"))
+    titular = getattr(settings, "COBRO_TITULAR_NOMBRE", os.getenv("COBRO_TITULAR_NOMBRE", "")) or "Polizando"
     lista_csv = getattr(settings, "ALIAS_CBU_LIST", os.getenv("ALIAS_CBU_LIST", "")).strip()
     if lista_csv:
         items = [x.strip() for x in lista_csv.split(",") if x.strip()]
@@ -53,7 +60,13 @@ def _fallback_from_settings() -> MedioCobroLite:
             idx = timezone.localdate().toordinal() % len(items)
             return MedioCobroLite(proveedor="Config", tipo="alias", valor=items[idx], titular_nombre=titular)
 
-    valor = getattr(settings, "ALIAS_CBU", os.getenv("ALIAS_CBU", "starkeseguros.mp"))
+    valor = getattr(settings, "ALIAS_CBU", os.getenv("ALIAS_CBU", "")).strip()
+    if not valor:
+        raise ImproperlyConfigured(
+            "❌ No hay ningún medio de cobro configurado: ni un MedioCobro activo en la "
+            "base, ni ALIAS_CBU_LIST, ni ALIAS_CBU en las variables de entorno. "
+            "Cargá al menos uno antes de mandar mensajes que le pidan plata a un cliente."
+        )
     return MedioCobroLite(proveedor="Config", tipo="alias", valor=valor, titular_nombre=titular)
 
 
@@ -107,7 +120,7 @@ def obtener_medio_cobro(force_valor: Optional[str] = None):
             tipo = "alias"
             proveedor = "Billetera"
 
-        titular = getattr(settings, "COBRO_TITULAR_NOMBRE", os.getenv("COBRO_TITULAR_NOMBRE", "Estudio Thames"))
+        titular = getattr(settings, "COBRO_TITULAR_NOMBRE", os.getenv("COBRO_TITULAR_NOMBRE", "")) or "Polizando"
         return MedioCobroLite(proveedor=proveedor, tipo=tipo, valor=valor, titular_nombre=titular)
 
     medio_db = _from_db_round_robin()

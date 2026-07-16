@@ -34,8 +34,8 @@ def generar_factura_pdf(cuota):
     p = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
 
-    # Estilo
-    color_primario = colors.HexColor("#8B1E3F")
+    # Estilo — verde primario de Polizando (#1F7A4C)
+    color_primario = colors.HexColor("#1F7A4C")
     margen = 40
     y = height - 50
 
@@ -104,7 +104,7 @@ def generar_factura_pdf(cuota):
     p.drawString(margen, y, "Gracias por confiar en nosotros.")
     p.setFont("Helvetica", 8)
     p.drawCentredString(width / 2, 50, "Este documento no constituye un recibo fiscal.")
-    p.drawCentredString(width / 2, 35, "STARKE | Sistema de Gestión de Seguros")
+    p.drawCentredString(width / 2, 35, "POLIZANDO | Sistema de Gestión de Seguros")
 
     p.showPage()
     p.save()

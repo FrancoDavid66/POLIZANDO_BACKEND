@@ -3,7 +3,6 @@ from datetime import date, datetime
 from typing import Dict
 from decimal import Decimal
 import sys
-from calendar import monthrange
 
 from django.db import transaction
 from django.db.models import Q
@@ -33,11 +32,11 @@ from polizas.models import (
     PolizaDocumento,
     TipoFotoVehiculo,
     OrigenFotoVehiculo,
-    CuponRobo,  
 )
 from pagos.models import Cuota
 from cotizaciones.models import TipoCobertura
 from polizas.precios_nre import es_nre, precio_multivehiculo, precio_vigente
+from polizas.domain.robo import ensure_cupones_robo_for_poliza
 from usuarios.models import Oficina
 
 try:
@@ -156,81 +155,12 @@ _TIPOS_DOC_ADMITIDOS = {
 }
 
 
-def _ensure_cupones_robo_for_poliza(poliza: Poliza) -> int:
-    print("\n" + "="*40)
-    print(" 🛠️ DEBUG: INICIANDO GENERACIÓN DE CUPONES")
-    print("="*40)
-    
-    poliza.refresh_from_db()
-    poliza_id = getattr(poliza, "id", None)
-    
-    print(f"👉 1. Póliza ID: {poliza_id}")
-    print(f"👉 2. Compañía registrada: '{poliza.compania}'")
-    print(f"👉 3. Cobertura registrada: '{poliza.cobertura}'")
-
-    genera_cupones = False
-    cob_nombre = (poliza.cobertura or "").strip()
-    comp_nombre = (poliza.compania or "").strip()
-    
-    cob_obj = TipoCobertura.objects.filter(
-        nombre__iexact=cob_nombre,
-        compania__nombre__iexact=comp_nombre
-    ).first()
-    
-    print(f"👉 4. ¿Encontró la cobertura en BD cruzando ambos datos?: {'SÍ' if cob_obj else 'NO'}")
-    
-    if cob_obj:
-        genera_cupones = cob_obj.genera_cupones_robo
-        print(f"👉 5. El check 'genera_cupones_robo' en BD es: {genera_cupones}")
-    else:
-        print("❌ ERROR: No se generarán cupones porque no se encontró la cobertura exacta en el catálogo.")
-
-    if not genera_cupones:
-        print("🛑 Abortando: La cobertura no requiere cupones.")
-        print("="*40 + "\n")
-        return 0
-
-    if CuponRobo.objects.filter(poliza=poliza).exists():
-        print("🛑 Abortando: Los cupones ya existen para esta póliza.")
-        print("="*40 + "\n")
-        return 0
-
-    cuotas = list(
-        Cuota.objects.filter(poliza=poliza)
-        .exclude(fecha_vencimiento__isnull=True)
-        .order_by("fecha_vencimiento", "cuota_nro", "id")
-    )
-    print(f"👉 6. Cuotas detectadas para esta póliza: {len(cuotas)}")
-
-    if not cuotas:
-        print("❌ ERROR: No hay cuotas generadas, imposible crear cupones.")
-        print("="*40 + "\n")
-        return 0
-
-    objs = []
-    for c in cuotas:
-        vto = c.fecha_vencimiento
-        if not vto: continue
-        last_day = monthrange(vto.year, vto.month)[1]
-        periodo_desde = date(vto.year, vto.month, 1)
-        periodo_hasta = date(vto.year, vto.month, last_day)
-        objs.append(
-            CuponRobo(
-                poliza=poliza,
-                periodo_desde=periodo_desde,
-                periodo_hasta=periodo_hasta,
-                fecha_vencimiento=vto,
-                estado=CuponRobo.Estado.PENDIENTE,
-                monto=0,
-            )
-        )
-
-    if objs:
-        CuponRobo.objects.bulk_create(objs, ignore_conflicts=False)
-        print(f"✅ ¡ÉXITO! Se acaban de generar y guardar {len(objs)} cupones de robo.")
-    
-    print("="*40 + "\n")
-    return len(objs)
+# 🔧 _ensure_cupones_robo_for_poliza (local) se eliminó — duplicaba la lógica
+# de polizas/domain/robo.py con una versión menos completa (no miraba
+# poliza.cobertura_obj primero, y no dejaba auditoría en `historia`). Ahora
+# se usa directamente ensure_cupones_robo_for_poliza(), importada arriba.
+# El resultado nunca se usaba en el único lugar que la llamaba, así que el
+# cambio de "devuelve un número" a "no devuelve nada" no afecta a nadie.
 
 
 class EmpleadoSerializer(serializers.ModelSerializer):
@@ -300,8 +230,12 @@ class SolicitudSeguroSerializer(serializers.ModelSerializer):
         }
 
     def get_cliente_id(self, obj):
-        if hasattr(obj, 'poliza') and obj.poliza: return obj.poliza.cliente_id
-        return None
+        # 🔧 FIX: 'poliza_id' es un IntegerField plano (no ForeignKey), así que
+        # obj nunca tiene un atributo 'poliza' de verdad — hasattr(obj, 'poliza')
+        # siempre daba False y esto devolvía None sin importar el caso.
+        if not obj.poliza_id:
+            return None
+        return Poliza.objects.filter(id=obj.poliza_id).values_list("cliente_id", flat=True).first()
 
     def validate(self, attrs):
         is_create = self.instance is None
@@ -662,7 +596,7 @@ class CrearCompletoSerializer(serializers.Serializer):
         importer_result = _importar_desde_solicitud_hacia_poliza(sol, pol)
         _log("CREAR_COMPLETO_IMPORT", **(importer_result or {}))
 
-        _ensure_cupones_robo_for_poliza(pol)
+        ensure_cupones_robo_for_poliza(pol)
 
         return {
             "cliente_id": cli.id,

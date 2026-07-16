@@ -7,18 +7,15 @@
 # las renovaciones son los dos cada 3 meses, no hace falta llevar la cuenta de
 # "en qué escalón va cada póliza" — se mira la fecha y listo.
 #
-# 🏢 EXCEPCIÓN El Talita (oficina OFI-05): SOLO el AUTO va distinto.
-#    - El cliente NUEVO entra más barato ($25.000) y lo mantiene todo el
-#      trimestre. Recién el 01/10 sube (1ra cuota gancho $30.000, resto $35.000).
-#    - El que RENUEVA paga un escalón más: hoy $30.000 (sin descuento, es el
-#      primer salto). Desde el 01/10 sube con descuento en la 1ra cuota, igual
-#      que las otras oficinas.
-#    El resto de los tipos (moto, camioneta, etc.) son iguales en todas lados.
-#
 # Cómo se usa:
 #   - Renovación  → precio_cuotas_renovacion(tipo, fecha, oficina)
 #   - Alta nueva  → precio_cuotas_alta_nueva(tipo, fecha, oficina)
 #   - Portal      → precio_vigente / precio_cuotas_renovacion para mostrar
+#
+# 🔧 Se sacó la excepción de "El Talita": Polizando no tiene sucursales, así
+# que no hay lugar para una tabla de precios distinta por oficina. El
+# parámetro `oficina` se mantiene en las firmas de las funciones solo para
+# no romper a quien ya las llama con ese argumento — no se usa para nada.
 #
 # Para CAMBIAR un precio: editás la tabla de abajo y deployás.
 # ──────────────────────────────────────────────────────────────────────────
@@ -53,26 +50,6 @@ PRECIOS_NRE = {
         (date(1900, 1, 1), 15000),
     ],
 }
-
-# 🏢 El Talita (OFI-05) — SOLO auto. Formato: (fecha_desde, gancho, vigente)
-#    gancho  = precio de la 1ra cuota (suaviza el salto).
-#    vigente = precio del resto de las cuotas.
-#
-# ALTA NUEVA (cliente nuevo): arranca a $25.000 todo el trimestre.
-PRECIOS_NRE_TALITA_AUTO = [
-    (date(1900, 1, 1),  25000, 25000),
-    (date(2026, 10, 1), 30000, 35000),
-    (date(2027, 1, 1),  35000, 39500),
-    (date(2027, 4, 1),  39500, 44500),
-]
-# RENOVACIÓN: un escalón más. Hoy $30.000 sin descuento (primer salto);
-#             desde el 01/10, con descuento en la 1ra cuota.
-PRECIOS_NRE_TALITA_AUTO_RENOV = [
-    (date(1900, 1, 1),  30000, 30000),
-    (date(2026, 10, 1), 30000, 35000),
-    (date(2027, 1, 1),  35000, 39500),
-    (date(2027, 4, 1),  39500, 44500),
-]
 
 
 def _norm_tipo(tipo):
@@ -173,42 +150,26 @@ def es_nre(compania):
     return "nre" in (compania or "").strip().lower()
 
 
-def es_talita(oficina):
-    """True si la oficina es El Talita (OFI-05).
-    Tolera: objeto Oficina (usa .codigo / .nombre), texto plano o id.
+def es_talita(oficina=None):
+    """🔧 STUB — Polizando no tiene sucursales, así que esto siempre es False.
+
+    Se mantiene la función (en vez de borrarla del todo) porque otros
+    archivos ya la importaban (usuarios/precios_views.py y los comandos de
+    ajuste de precios) y no quiero que un import roto tumbe el arranque de
+    Django de nuevo. Si en algún momento se confirma que ya nadie la usa,
+    se puede borrar.
     """
-    if oficina is None:
-        return False
-    cod = str(getattr(oficina, "codigo", "") or "").strip().lower()
-    nom = str(getattr(oficina, "nombre", "") or "").strip().lower()
-    txt = str(oficina).strip().lower()
-    blob = " ".join([cod, nom, txt])
-    return "talita" in blob or "ofi-05" in blob or "ofi-5" in blob
-
-
-def _es_talita_auto(tipo, oficina):
-    """El Talita SOLO tiene precio especial para el auto."""
-    return _norm_tipo(tipo) == "Auto" and es_talita(oficina)
-
-
-def _talita_periodo(tabla, fecha):
-    """(gancho, vigente) del período vigente de una tabla Talita a una fecha."""
-    gancho, vigente = tabla[0][1], tabla[0][2]
-    for desde, g, v in tabla:
-        if desde <= fecha:
-            gancho, vigente = g, v
-    return gancho, vigente
+    return False
 
 
 def precio_vigente(tipo, fecha=None, oficina=None):
     """Precio de la categoría a una fecha (el que pagan las cuotas 2 en adelante,
     y el que muestra una póliza activa). Devuelve None si no está en la lista.
-    En El Talita auto, es el precio "actual" del cliente (tabla de alta).
+
+    `oficina` no se usa (Polizando no tiene sucursales) — queda en la firma
+    solo por compatibilidad con quien ya la llama con ese argumento.
     """
     fecha = fecha or date.today()
-    if _es_talita_auto(tipo, oficina):
-        _, vig = _talita_periodo(PRECIOS_NRE_TALITA_AUTO, fecha)
-        return vig
     clave = _norm_tipo(tipo)
     if clave is None:
         return None
@@ -222,9 +183,6 @@ def precio_vigente(tipo, fecha=None, oficina=None):
 def precio_anterior(tipo, fecha=None, oficina=None):
     """El gancho de la 1ra cuota (escalón previo / lo que venía pagando)."""
     fecha = fecha or date.today()
-    if _es_talita_auto(tipo, oficina):
-        gancho, _ = _talita_periodo(PRECIOS_NRE_TALITA_AUTO, fecha)
-        return gancho
     clave = _norm_tipo(tipo)
     if clave is None:
         return None
@@ -241,10 +199,6 @@ def es_primer_aumento(tipo, fecha=None, oficina=None):
     Ese aumento, al renovar, va FIJO (sin oferta).
     """
     fecha = fecha or date.today()
-    if _es_talita_auto(tipo, oficina):
-        # En El Talita auto la renovación se maneja con su propia tabla, así que
-        # esta función no decide ahí; devolvemos False por compatibilidad.
-        return False
     clave = _norm_tipo(tipo)
     if clave is None:
         return False
@@ -258,12 +212,9 @@ def es_primer_aumento(tipo, fecha=None, oficina=None):
 
 def precio_cuotas_renovacion(tipo, fecha=None, oficina=None):
     """Precios de las cuotas al RENOVAR. Devuelve (precio_primera, precio_resto).
-    - El Talita auto: tabla propia (hoy $30.000 fijo; desde 01/10 con descuento).
-    - Resto: primer aumento sin oferta; aumentos siguientes con oferta.
+    Primer aumento sin oferta; aumentos siguientes con oferta.
     """
     fecha = fecha or date.today()
-    if _es_talita_auto(tipo, oficina):
-        return _talita_periodo(PRECIOS_NRE_TALITA_AUTO_RENOV, fecha)
     vig = precio_vigente(tipo, fecha, oficina)
     if vig is None:
         return (None, None)
@@ -274,12 +225,9 @@ def precio_cuotas_renovacion(tipo, fecha=None, oficina=None):
 
 def precio_cuotas_alta_nueva(tipo, fecha=None, oficina=None):
     """Precios de las cuotas en un ALTA NUEVA (cliente nuevo).
-    - El Talita auto: tabla propia (hoy $25.000; desde 01/10 con gancho).
-    - Resto: SIN promo → todas las cuotas al precio vigente.
+    Sin promo → todas las cuotas al precio vigente.
     """
     fecha = fecha or date.today()
-    if _es_talita_auto(tipo, oficina):
-        return _talita_periodo(PRECIOS_NRE_TALITA_AUTO, fecha)
     vig = precio_vigente(tipo, fecha, oficina)
     if vig is None:
         return (None, None)
@@ -292,8 +240,6 @@ def precio_cuotas_alta_nueva(tipo, fecha=None, oficina=None):
 #   1er vehículo  → precio normal (sin descuento)
 #   2do vehículo  → ~8% menos
 #   3ro o más     → ~12% menos
-# Aplica en TODAS las oficinas. El Talita usa su propia base para el auto
-# (el resto de los tipos en El Talita usan la tabla general).
 # Números fijos acordados (no porcentaje exacto). Si cambia el precio base,
 # actualizar también estas tablas.
 # ──────────────────────────────────────────────────────────────────────────
@@ -306,9 +252,6 @@ DESCUENTO_MULTIVEHICULO = {
     "Trailer":   {2: 13800, 3: 13200},
 }
 
-# El Talita: solo el AUTO tiene base propia ($25.000).
-DESCUENTO_MULTIVEHICULO_TALITA_AUTO = {2: 23000, 3: 22000}
-
 
 def precio_multivehiculo(tipo, oficina, polizas_activas):
     """
@@ -320,6 +263,9 @@ def precio_multivehiculo(tipo, oficina, polizas_activas):
         0 activas  → la nueva es el 1er vehículo  → None (precio normal)
         1 activa   → la nueva es el 2do vehículo  → nivel 2 (~8% menos)
         2 o más    → la nueva es el 3ro o más     → nivel 3 (~12% menos)
+
+    `oficina` no se usa (Polizando no tiene sucursales) — queda en la firma
+    solo por compatibilidad con quien ya la llama con ese argumento.
     """
     try:
         n = int(polizas_activas or 0)
@@ -330,9 +276,6 @@ def precio_multivehiculo(tipo, oficina, polizas_activas):
     if nivel < 2:
         return None          # 1er vehículo: sin descuento
     nivel = 3 if nivel >= 3 else 2
-
-    if _es_talita_auto(tipo, oficina):
-        return DESCUENTO_MULTIVEHICULO_TALITA_AUTO.get(nivel)
 
     tn = _norm_tipo(tipo)
     tabla = DESCUENTO_MULTIVEHICULO.get(tn) or DESCUENTO_MULTIVEHICULO.get(tipo)

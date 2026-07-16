@@ -12,7 +12,6 @@ from django.utils.dateparse import parse_date
 from django.db.models import Q
 from django.db.models import OuterRef, Subquery, DateField
 from django.db.models import Max, Avg, Count, F, ExpressionWrapper, FloatField
-from django.core.exceptions import FieldDoesNotExist
 from django.db.models.functions import Coalesce, ExtractDay, ExtractHour, ExtractMinute
 
 from rest_framework import status, viewsets
@@ -40,117 +39,42 @@ MAX_HISTORIAL_ALL_ROWS = 50000
 
 
 # -------------------------
-# 🚀 SUPER TRADUCTOR MULTI-TENANT (A PRUEBA DE FALLOS)
+# 🔧 Antes esto era 3 funciones que reconocían "5 esquinas / axion / km 39"
+# (las 3 sucursales de Thames) por nombre, código o texto libre, con sinónimos
+# y regex. Polizando no tiene sucursales — Poliza.oficina es un ForeignKey real
+# a Oficina, así que alcanza con filtrar por su id. Se mantienen los mismos
+# nombres de función y el mismo contrato de retorno (lista de ids, o
+# ["BLOQUEADO"] si no hay acceso, o [] si no hay que filtrar) para no tener
+# que tocar cada lugar que las llama.
 # -------------------------
 def _get_seguridad_oficina_brute(request, requested_oficina=""):
     user = request.user
     if not user.is_authenticated:
         return ["BLOQUEADO"]
-        
+
     es_admin = user.is_superuser or (hasattr(user, 'perfil') and user.perfil.rol == 'ADMIN')
-    
-    target = None
+
     if es_admin:
         val = str(requested_oficina or "").strip()
         if not val or val.upper() == "ALL":
-            return [] # Sin filtro
-        target = val
-    else:
-        if hasattr(user, 'perfil') and user.perfil.oficina:
-            target = user.perfil.oficina
-        else:
-            return ["BLOQUEADO"]
-            
-    synonyms = set()
-    
-    if hasattr(target, 'codigo') and target.codigo:
-        synonyms.add(str(target.codigo).strip().lower())
-    if hasattr(target, 'id') and target.id:
-        synonyms.add(str(target.id).strip().lower())
-    if hasattr(target, 'nombre') and target.nombre:
-        synonyms.add(str(target.nombre).strip().lower())
-        
-    if isinstance(target, str):
-        s = target.strip().lower()
-        synonyms.add(s)
-        try:
-            from django.apps import apps
-            Oficina = apps.get_model("usuarios", "Oficina")
-            if s.isdigit():
-                ofi = Oficina.objects.filter(Q(codigo=s) | Q(id=s)).first()
-            else:
-                ofi = Oficina.objects.filter(nombre__icontains=s).first()
-            if ofi:
-                synonyms.add(str(ofi.codigo).strip().lower())
-                synonyms.add(str(ofi.id).strip().lower())
-                synonyms.add(str(ofi.nombre).strip().lower())
-        except Exception:
-            pass
-            
-    final_synonyms = set(synonyms)
-    for s in synonyms:
-        if "1" == s or "esquina" in s or "5 esquinas" in s:
-            final_synonyms.update(["1", "5 esquinas", "ofi 1", "ofi1"])
-        elif "2" == s or "axion" in s:
-            final_synonyms.update(["2", "axion", "ofi 2", "ofi2"])
-        elif "3" == s or "39" in s or "kilometro" in s:
-            final_synonyms.update(["3", "39", "kilometro 39", "ofi 3", "ofi3"])
-            
-    return list(final_synonyms)
+            return []  # sin filtro: admin ve todo
+        return [val]
 
-
-def _is_poliza_oficina_fk() -> bool:
-    try:
-        f = Poliza._meta.get_field("oficina")
-        return bool(getattr(f, "is_relation", False))
-    except (FieldDoesNotExist, Exception):
-        return False
+    ofi_id = getattr(user, 'perfil', None) and getattr(user.perfil, 'oficina_id', None)
+    if ofi_id:
+        return [str(ofi_id)]
+    return ["BLOQUEADO"]
 
 
 def _build_oficina_q_from_keys(keys):
-    if not keys: return Q()
-    if "BLOQUEADO" in keys: return Q(pk__isnull=True)
-    
-    is_fk = _is_poliza_oficina_fk()
-    q_final = Q()
-    
-    for k in keys:
-        s = str(k).strip()
-        if not s: continue
-        
-        if is_fk:
-            if s.isdigit():
-                q_final |= Q(poliza__oficina_id=int(s))
-            q_final |= Q(poliza__oficina__nombre__icontains=s)
-            try: q_final |= Q(poliza__oficina__codigo=s)
-            except Exception: pass
-        else:
-            q_final |= Q(poliza__oficina__icontains=s)
-            q_final |= Q(poliza__oficina__iexact=s)
-            
-    return q_final
-
-
-def _oficina_q_sobre_poliza(keys):
-    """Igual que _build_oficina_q_from_keys pero para querysets de Poliza
-    (sin el prefijo 'poliza__', porque ya estamos parados en Poliza)."""
-    if not keys: return Q()
-    if "BLOQUEADO" in keys: return Q(pk__isnull=True)
-    is_fk = _is_poliza_oficina_fk()
-    q_final = Q()
-    for k in keys:
-        s = str(k).strip()
-        if not s: continue
-        if is_fk:
-            if s.isdigit():
-                q_final |= Q(oficina_id=int(s))
-            q_final |= Q(oficina__nombre__icontains=s)
-            try: q_final |= Q(oficina__codigo=s)
-            except Exception: pass
-        else:
-            q_final |= Q(oficina__icontains=s)
-            q_final |= Q(oficina__iexact=s)
-    return q_final
+    if not keys:
+        return Q()
+    if "BLOQUEADO" in keys:
+        return Q(pk__isnull=True)
+    ids = [k for k in keys if str(k).strip().isdigit()]
+    if not ids:
+        return Q(pk__isnull=True)
+    return Q(poliza__oficina_id__in=ids)
 
 
 def _parse_mes_yyyy_mm(raw: str):
@@ -691,7 +615,6 @@ class PagoViewSet(viewsets.ModelViewSet):
           - falta_emitir
           - pago_post_baja
           - avisar_vendedor
-          - revisar_mariano
         """
         from .models import ESTADO_VERIFICACION_CHOICES
 

@@ -11,6 +11,15 @@ from django.core.exceptions import ImproperlyConfigured  # 🔒 para fallar clar
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# 🖥️ DESARROLLO LOCAL: carga variables desde un archivo .env en la raíz del
+# repo (mismo nivel que manage.py), si existe. En Railway no hace nada (no hay
+# .env ahí, las variables ya vienen puestas por Railway) — no rompe nada.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env")
+except ImportError:
+    pass  # python-dotenv no instalado: seguí sin .env, o correr "pip install python-dotenv"
+
 
 def get_required_env(name: str) -> str:
     """
@@ -45,31 +54,24 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt', # 🚀 AGREGADO PARA JWT
     'corsheaders',
-
     'clientes',
     'pagos.apps.PagosConfig',
     'siniestros',
-    'geo',
-    'inmuebles',
-    'alquileres',
     'balanzes',
     'polizas',
-    'gruas',
     'historia',
     # ⚠️ Usar AppConfig para cargar señales y evitar duplicado de label:
     'solicitudes.apps.SolicitudesConfig',
     'django_filters',
     'notificaciones',
-    'competencia',
     'estadisticas',
-    'marketing',
     'bajas',
     'usuarios',
     'recaudacion',
     'cotizaciones',
     'servicios',
-    'tareas',
-    'ranking'
+    'tareas'
+   
 ]
 
 MIDDLEWARE = [

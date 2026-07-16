@@ -14,17 +14,14 @@ from pagos.models import Cuota, Pago
 
 import os
 
-from django.core.exceptions import ImproperlyConfigured
-
-# URL del frontend para armar el link del portal.
-# 🔒 Sin default: cada proyecto (Thames / Polizando) tiene que apuntar al SUYO.
-FRONTEND_URL = os.environ.get("FRONTEND_URL")
-if not FRONTEND_URL:
-    raise ImproperlyConfigured(
-        "❌ Falta la variable de entorno FRONTEND_URL (URL del front de Polizando). "
-        "Setealá en Railway antes de correr esto."
-    )
-FRONTEND_URL = FRONTEND_URL.rstrip("/")
+# 🔧 FIX CRÍTICO: antes esto se leía y validaba a nivel de MÓDULO (se ejecutaba
+# apenas Django intentaba importar este archivo, en CADA arranque, incluso para
+# comandos que no tienen nada que ver con esto). Como _enviar_gracias_portal
+# está desactivada ahora mismo, exigir FRONTEND_URL en el import tumbaba toda
+# la app en Railway por una variable que ni siquiera se usa todavía.
+# Ahora se lee de forma perezosa, adentro de la función que de verdad la
+# necesita — y esa función ya retorna antes de necesitarla, así que ni
+# siquiera hace falta la variable mientras siga desactivada.
 
 
 def _enviar_gracias_portal(poliza):
@@ -35,6 +32,17 @@ def _enviar_gracias_portal(poliza):
     print("[gracias_portal] Desactivado temporalmente → no se envía nada.")
     return
     # ─────────────────────────────────────────────────────────────────────────
+    # URL del frontend para armar el link del portal.
+    # 🔒 Sin default: cada proyecto (Thames / Polizando) tiene que apuntar al SUYO.
+    # Se valida ACÁ (recién cuando esta función de verdad corre), no al importar
+    # el archivo — así una variable de una feature desactivada no puede tumbar
+    # toda la app.
+    frontend_url = os.environ.get("FRONTEND_URL")
+    if not frontend_url:
+        print("[gracias_portal] Falta FRONTEND_URL → no se puede armar el link del portal.")
+        return
+    frontend_url = frontend_url.rstrip("/")
+
     cliente = getattr(poliza, "cliente", None)
     if not cliente:
         print("[gracias_portal] La póliza no tiene cliente → no se envía.")
@@ -52,7 +60,7 @@ def _enviar_gracias_portal(poliza):
     if not token:
         print("[gracias_portal] El cliente no tiene token de portal → no se envía.")
         return
-    link = f"{FRONTEND_URL}/#/portal/{token}"
+    link = f"{frontend_url}/#/portal/{token}"
     nombre = ""
     n = (getattr(cliente, "nombre", "") or "").strip()
     if n:
@@ -72,18 +80,6 @@ def _enviar_gracias_portal(poliza):
         print(f"[gracias_portal] ✅ WhatsApp enviado a {tel}.")
     else:
         print(f"[gracias_portal] ❌ WhatsApp NO enviado a {tel}: {info}")
-
-
-# 🚀 Código de caja de la oficina
-def _obtener_codigo_caja(poliza):
-    """Código de la oficina para el ingreso de caja: usa Oficina.codigo
-    (siempre debería estar seteado); si no, cae en el id como texto."""
-    ofi = getattr(poliza, 'oficina', None)
-    if not ofi:
-        return ""
-    if hasattr(ofi, 'codigo') and ofi.codigo:
-        return str(ofi.codigo).strip()
-    return str(getattr(ofi, 'id', ofi)).strip()
 
 
 def _puede_cobrar_poliza(request, poliza):
@@ -230,9 +226,6 @@ def registrar_pago_handler(data, request=None):
                     pago.save()
 
                 forma_balance = "efectivo" if (metodo_mapped == "efectivo") else "transferencia"
-                
-                # 🚀 USAMOS EL TRADUCTOR INFALIBLE
-                ofi_code = _obtener_codigo_caja(poliza)
 
                 try:
                     Ingreso = apps.get_model("balances", "Ingreso")

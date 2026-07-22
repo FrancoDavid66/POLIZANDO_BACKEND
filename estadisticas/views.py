@@ -6,29 +6,16 @@ from io import BytesIO
 import math
 
 from django.db.models import Count, Q, Sum
-from django.http import FileResponse, HttpResponse
+from django.http import HttpResponse
 from django.utils import timezone
-from django.utils.dateparse import parse_date
 from django.db.models import OuterRef, Subquery
-from django.db.models import Max
 from django.core.exceptions import FieldDoesNotExist
-from django.db.models import F
-from django.db.models.functions import Coalesce
 from django.db.models import DateTimeField
 from django.db.models.functions import TruncDay, TruncMonth, Trunc, TruncWeek, TruncHour
 
-from rest_framework import status, viewsets
-from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.filters import SearchFilter, OrderingFilter
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.units import mm
-from reportlab.pdfgen import canvas
 
 from polizas.models import Poliza
 from clientes.models import Cliente
@@ -45,8 +32,8 @@ def auto_marcar_vencidas():
     Mantiene compatibilidad con las llamadas existentes.
     """
     try:
-        from polizas.views.poliza import sincronizar_estados_polizas
-        sincronizar_estados_polizas()
+        from polizas.views.poliza import auto_marcar_vencidas as _sync_estados
+        _sync_estados()
     except Exception:
         # Fallback silencioso para no romper ningún endpoint
         pass
@@ -662,150 +649,6 @@ class EmisionesSeriePorOficinaAPIView(APIView):
         except Exception: pass
 
         return Response({ "date_field": "fecha_emision", "agrupacion": agrupacion, "desde": desde.isoformat(), "hasta": hasta.isoformat(), "periodos": periodos, "oficinas": oficinas_payload, "fuente": "live" })
-
-
-# -------------------------
-# Solicitudes: series por oficina (día/semana/mes)
-# -------------------------
-try:
-    from solicitudes.models import SolicitudSeguro
-except Exception:
-    SolicitudSeguro = None
-
-from django.db.models.functions import TruncDay as _TruncDay2, TruncMonth as _TruncMonth2, Trunc as _Trunc2, TruncWeek as _TruncWeek2
-
-class SolicitudesSeriePorOficinaAPIView(APIView):
-    """
-    GET /api/estadisticas/solicitudes/serie/
-    """
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, *args, **kwargs):
-        if SolicitudSeguro is None: return Response({"detail": "Modelo SolicitudSeguro no disponible."}, status=500)
-
-        params = request.query_params
-        oficina_filtro_raw = str(params.get("oficina") or "").strip()
-        oficina_segura_keys = _get_seguridad_oficina(request, oficina_filtro_raw)
-        
-        if "BLOQUEADO" in oficina_segura_keys: return Response({"error": "Acceso denegado"}, status=403)
-
-        agrupacion = str(params.get("agrupacion") or "dia").strip().lower()
-        if agrupacion not in {"dia", "semana", "mes"}: agrupacion = "dia"
-
-        desde = _parse_date_iso(params.get("desde"))
-        hasta = _parse_date_iso(params.get("hasta")) or timezone.localdate()
-
-        if desde is None:
-            if agrupacion == "dia": desde = hasta - timedelta(days=30)
-            elif agrupacion == "semana": desde = hasta - timedelta(weeks=12)
-            else: desde = hasta - timedelta(days=365)
-
-        if desde > hasta: desde, hasta = hasta, desde
-
-        estados_raw = str(params.get("estados") or "").strip()
-        estados = [s.strip() for s in estados_raw.split(",") if s.strip()] if estados_raw else []
-
-        dt_from = timezone.make_aware(datetime.combine(desde, time.min))
-        dt_to_excl = timezone.make_aware(datetime.combine(hasta + timedelta(days=1), time.min))
-
-        qs = SolicitudSeguro.objects.all()
-
-        if oficina_segura_keys: qs = _apply_oficina_filter(qs, oficina_segura_keys, is_poliza_model=True)
-        if estados: qs = qs.filter(estado__in=estados)
-        qs = qs.filter(creado_en__gte=dt_from, creado_en__lt=dt_to_excl)
-
-        if agrupacion == "dia": trunc_expr = _TruncDay2("creado_en")
-        elif agrupacion == "mes": trunc_expr = _TruncMonth2("creado_en")
-        else:
-            try: trunc_expr = _TruncWeek2("creado_en")
-            except Exception: trunc_expr = _Trunc2("creado_en", "week", output_field=DateTimeField())
-
-        rows = qs.annotate(periodo=trunc_expr).values("periodo", "oficina_id").annotate(c=Count("id")).order_by("periodo")
-
-        period_set = set()
-        acc = {}
-
-        for r in rows:
-            per = r.get("periodo")
-            if per is None: continue
-            per_date = per.date() if hasattr(per, "date") else per
-            per_str = per_date.isoformat()
-
-            bucket = _bucket_oficina(r.get("oficina_id"))
-            acc.setdefault(bucket, {})
-            acc[bucket][per_str] = int(acc[bucket].get(per_str, 0)) + int(r.get("c") or 0)
-            period_set.add(per_str)
-
-        periodos = sorted(period_set)
-        oficinas_payload = []
-        for b in acc.keys():
-            serie = [{"periodo": p, "cantidad": int(acc[b].get(p, 0))} for p in periodos]
-            total = sum(it["cantidad"] for it in serie)
-            oficinas_payload.append({ "oficina": b, "oficina_nombre": b, "total": int(total), "serie": serie })
-
-        return Response({ "agrupacion": agrupacion, "desde": desde.isoformat(), "hasta": hasta.isoformat(), "periodos": periodos, "oficinas": oficinas_payload, "fuente": "live" })
-
-
-# -------------------------
-# Agrosalta: KPIs (Autos con robo + Camiones)
-# -------------------------
-class AgrosaltaKpisAPIView(APIView):
-    """
-    GET /api/estadisticas/agrosalta/kpis/
-    """
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, *args, **kwargs):
-        params = request.query_params
-
-        oficina_filtro_raw = str(params.get("oficina") or "").strip()
-        oficina_segura_keys = _get_seguridad_oficina(request, oficina_filtro_raw)
-        
-        if "BLOQUEADO" in oficina_segura_keys: return Response({"error": "Acceso denegado"}, status=403)
-
-        compania = str(params.get("compania") or "AGROSALTA").strip()
-        solo_activas = str(params.get("solo_activas") or "1").strip().lower() in { "1", "true", "t", "yes", "y", "si", "sí" }
-
-        qs_base = Poliza.objects.all()
-        if solo_activas: qs_base = qs_base.filter(estado="activa")
-        if oficina_segura_keys: qs_base = _apply_oficina_filter(qs_base, oficina_segura_keys, is_poliza_model=True)
-
-        qs = qs_base
-        if compania: qs = qs.filter(Q(compania__iexact=compania) | Q(compania__icontains=compania))
-
-        autos_qs = qs.filter(tipo__iexact="auto")
-        camion_q = (Q(tipo__iexact="camion") | Q(tipo__iexact="camión") | Q(tipo__icontains="camion") | Q(tipo__icontains="camión")) & ~Q(tipo__icontains="camioneta") & ~Q(tipo__icontains="camionéta")
-        camiones_qs = qs.filter(camion_q)
-
-        autos_total = autos_qs.count()
-        camiones_total = camiones_qs.count()
-
-        tiene_cobertura = hasattr(Poliza, "cobertura")
-        autos_cobertura_A = 0
-        autos_sin_cobertura = 0
-        autos_con_robo = 0
-
-        if tiene_cobertura:
-            autos_cobertura_A = autos_qs.filter(cobertura__iexact="A").count()
-            autos_sin_cobertura = autos_qs.filter(Q(cobertura__isnull=True) | Q(cobertura__exact="")).count()
-            autos_con_robo = autos_qs.exclude(Q(cobertura__iexact="A") | Q(cobertura__isnull=True) | Q(cobertura__exact="")).count()
-
-        camiones_all_qs = qs_base.filter(camion_q)
-        camiones_total_todas_companias = camiones_all_qs.count()
-
-        rows = camiones_all_qs.values("compania").annotate(c=Count("id")).order_by("-c", "compania")
-        camiones_por_compania = []
-        for r in rows:
-            name = str(r.get("compania") or "").strip() or "SIN_COMPANIA"
-            camiones_por_compania.append({"compania": name, "cantidad": int(r.get("c") or 0)})
-
-        payload = {
-            "compania": compania or None, "oficina": oficina_filtro_raw or None, "solo_activas": bool(solo_activas),
-            "autos_total": int(autos_total), "autos_con_robo": int(autos_con_robo), "autos_cobertura_A": int(autos_cobertura_A),
-            "autos_sin_cobertura": int(autos_sin_cobertura), "camiones_total": int(camiones_total),
-            "camiones_total_todas_companias": int(camiones_total_todas_companias), "camiones_por_compania": camiones_por_compania, "fuente": "live",
-        }
-        return Response(payload)
 
 
 # -------------------------

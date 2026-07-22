@@ -155,16 +155,9 @@ def handle_create_poliza(serializer, compania_config=None):
 
     cuotas_bulk = []
 
-    # 🚀 PRECIO AUTOMÁTICO NRE (alta nueva): el cliente nuevo SIEMPRE va con oferta.
-    #    1ra cuota = escalón anterior (gancho de entrada), resto = precio vigente.
-    #    La fecha que define el escalón es la fecha de emisión.
-    #    Otras compañías: cuotas en 0 (se cargan a mano), como siempre.
-    # 🆕 Precio: ya NO se calcula solo para NRE. Todas las compañías
-    #    quedan igual: cuotas en 0, el usuario carga el precio a mano
-    #    (y lo cobra después desde Pagos).
-    precio_primera = None
-    precio_resto = None
-
+    # 🆕 Precio: todas las compañías arrancan con las cuotas en 0. El usuario
+    #    carga el precio a mano y lo cobra después desde Pagos. Excepción: si
+    #    vino una cuponera, cada cuota toma el importe real del cupón.
     if usar_cupones:
         # 🆕 Cuotas EXACTAS de la cuponera (fecha + importe del cupón).
         for i, cup in enumerate(cupones_pdf, start=1):
@@ -182,15 +175,11 @@ def handle_create_poliza(serializer, compania_config=None):
     else:
         for i in range(1, cantidad_cuotas + 1):
             venc = fecha_emision + relativedelta(months=i)
-            if precio_resto is not None:
-                monto_i = precio_primera if i == 1 else precio_resto
-            else:
-                monto_i = 0
             cuotas_bulk.append(Cuota(
                 poliza=poliza,
                 cuota_nro=i,
                 fecha_vencimiento=venc,
-                monto=monto_i,
+                monto=0,
                 pagado=False,
             ))
     Cuota.objects.bulk_create(cuotas_bulk)

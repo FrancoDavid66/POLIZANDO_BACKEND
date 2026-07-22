@@ -47,7 +47,6 @@ class DigestDia:
 # ─── Detección de mora ────────────────────────────────────────────────────────
 
 def detectar_polizas_en_mora(
-    dias_default: int = 3,
     oficina_id: Optional[int] = None,
 ) -> list:
     """
@@ -128,14 +127,13 @@ def detectar_polizas_en_mora(
 
 @transaction.atomic
 def crear_bajas_pendientes(
-    dias_default: int = 3,
     oficina_id: Optional[int] = None,
 ) -> int:
     """
     Crea registros BajaPoliza en PENDIENTE_ENVIO para las pólizas en mora
     que aún no tienen uno. Retorna la cantidad de registros nuevos creados.
     """
-    polizas_mora = detectar_polizas_en_mora(dias_default, oficina_id)
+    polizas_mora = detectar_polizas_en_mora(oficina_id)
     creadas = 0
 
     for p in polizas_mora:
@@ -156,7 +154,6 @@ def crear_bajas_pendientes(
 # ─── Digest del día ───────────────────────────────────────────────────────────
 
 def construir_digest(
-    dias_default: int = 3,
     oficina_id: Optional[int] = None,
 ) -> DigestDia:
     """
@@ -164,9 +161,9 @@ def construir_digest(
     Primero asegura que existan los registros BajaPoliza.
     """
     hoy = timezone.localdate()
-    crear_bajas_pendientes(dias_default, oficina_id)
+    crear_bajas_pendientes(oficina_id)
 
-    polizas = detectar_polizas_en_mora(dias_default, oficina_id)
+    polizas = detectar_polizas_en_mora(oficina_id)
 
     grupos_map: dict = {}
     for p in polizas:
@@ -226,7 +223,7 @@ def _construir_cuerpo_html(
     compania: str,
     polizas: list,
     fecha: date,
-    remitente_nombre: str = "Thames Seguros",
+    remitente_nombre: str = "Polizando",
 ) -> str:
     filas_html = ""
     for p in polizas:
@@ -327,10 +324,7 @@ def enviar_digest_compania(
             "error":    f"No hay correo configurado para '{compania}'.",
         }
 
-    polizas_raw = detectar_polizas_en_mora(
-        dias_default=correo_obj.dias_gracia,
-        oficina_id=oficina_id,
-    )
+    polizas_raw = detectar_polizas_en_mora(oficina_id=oficina_id)
     polizas_cia = [
         p for p in polizas_raw
         if p["compania"].strip().lower() == compania.strip().lower()
@@ -360,7 +354,7 @@ def enviar_digest_compania(
         compania=compania,
         polizas=polizas_info,
         fecha=hoy,
-        remitente_nombre=getattr(settings, "EMAIL_REMITENTE_NOMBRE", "Thames Seguros"),
+        remitente_nombre=getattr(settings, "EMAIL_REMITENTE_NOMBRE", "Polizando"),
     )
 
     email_ok    = False
@@ -418,16 +412,15 @@ def enviar_digest_compania(
 
 
 def enviar_todas_del_dia(
-    dias_default: int = 3,
     oficina_id: Optional[int] = None,
 ) -> list:
     """
     Envía el digest a todas las compañías con bajas PENDIENTE_ENVIO.
     Retorna una lista de resultados por compañía.
     """
-    crear_bajas_pendientes(dias_default, oficina_id)
+    crear_bajas_pendientes(oficina_id)
 
-    polizas = detectar_polizas_en_mora(dias_default, oficina_id)
+    polizas = detectar_polizas_en_mora(oficina_id)
     companias_pendientes = {
         p["compania"]
         for p in polizas

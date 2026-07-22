@@ -70,7 +70,7 @@ INSTALLED_APPS = [
     'recaudacion',
     'cotizaciones',
     'servicios',
-    'tareas'
+   
    
 ]
 

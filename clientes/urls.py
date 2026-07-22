@@ -34,13 +34,6 @@ urlpatterns = [
         name="clientes-fusionar-dni",
     ),
 
-    # ✅ Compat: antes era un ViewSet separado. Ahora apunta a la action del ClienteViewSet.
-    path(
-        "clientes-con-poliza/",
-        ClienteViewSet.as_view({"post": "crear_con_poliza"}),
-        name="cliente-con-poliza",
-    ),
-
     # 🚀 LINK DEL PORTAL DEL ASEGURADO (uso interno).
     # ⚠️ ANTES del router: si no, "<pk>/portal-link" se confunde con un detail del ViewSet.
     #   GET  → devuelve/crea el token   ·   POST → regenera el token (invalida el link viejo)

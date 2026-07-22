@@ -5,9 +5,7 @@ from .views import (
     VehiculosResumenAPIView,
     VehiculosExportAPIView,
     VehiculosListAPIView,
-    SolicitudesSeriePorOficinaAPIView,
     EmisionesSeriePorOficinaAPIView,
-    AgrosaltaKpisAPIView,
     ClientesDuplicadosAPIView,
     PolizasDuplicadasAPIView,
     ContabilidadResumenAPIView,
@@ -55,13 +53,6 @@ urlpatterns = [
         name="polizas-emisiones-export-excel",
     ),
 
-    # ✅ KPIs Agrosalta (Autos con Robo + Camiones)
-    path(
-        "agrosalta/kpis/",
-        AgrosaltaKpisAPIView.as_view(),
-        name="agrosalta-kpis",
-    ),
-
     path(
         "vehiculos/resumen/",
         VehiculosResumenAPIView.as_view(),
@@ -76,12 +67,6 @@ urlpatterns = [
         "vehiculos/export/",
         VehiculosExportAPIView.as_view(),
         name="vehiculos-export",
-    ),
-
-    path(
-        "solicitudes/serie/",
-        SolicitudesSeriePorOficinaAPIView.as_view(),
-        name="solicitudes-serie",
     ),
 
     # ✅ Duplicados

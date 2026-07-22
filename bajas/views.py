@@ -1,5 +1,6 @@
 # bajas/views.py
 
+import logging
 from datetime import timedelta
 import csv
 from django.http import HttpResponse
@@ -20,9 +21,10 @@ from bajas.services import (
     construir_digest,
     enviar_digest_compania,
     enviar_todas_del_dia,
-    crear_bajas_pendientes,
 )
 from polizas.utils.viewtools import hist_log as _hist_log
+
+logger = logging.getLogger(__name__)
 
 
 def _to_bool(v):
@@ -31,6 +33,26 @@ def _to_bool(v):
     if isinstance(v, bool):
         return v
     return str(v).strip().lower() in {"1", "true", "t", "yes", "y", "on", "si", "sí"}
+
+
+def _ofi_str(ofi):
+    """Nombre legible de una oficina (nombre → código → str), o None/— si no hay."""
+    if not ofi:
+        return None
+    return getattr(ofi, "nombre", None) or getattr(ofi, "codigo", None) or str(ofi)
+
+
+def _mora_dias(poliza, hoy):
+    """Días de mora desde la PRIMERA cuota impaga (min_vto_impaga). 0 si no hay."""
+    min_vto = getattr(poliza, "min_vto_impaga", None)
+    return (hoy - min_vto).days if min_vto else 0
+
+
+def _asegurado_apellido_nombre(cli):
+    """'Apellido Nombre' del cliente, o '' si no hay."""
+    if not cli:
+        return ""
+    return f"{getattr(cli, 'apellido', '') or ''} {getattr(cli, 'nombre', '') or ''}".strip()
 
 
 # ─── Correos ABM ─────────────────────────────────────────────────────────────
@@ -216,16 +238,9 @@ class BajaPolizaViewSet(viewsets.GenericViewSet):
             min_vto  = getattr(p, "min_vto_impaga", None)
             max_vto  = getattr(p, "max_vto_impaga", None)
             # 🎯 mora_dias se cuenta desde la PRIMERA cuota impaga (min), igual que
-            # en el CSV, el Excel y services.py. Antes el listado usaba max_vto y
-            # mostraba menos días que el resto del sistema para la misma póliza.
-            mora_dias = (hoy - min_vto).days if min_vto else 0
-
-            ofi = getattr(p, "oficina", None)
-            ofi_str = (
-                getattr(ofi, "nombre", None) or
-                getattr(ofi, "codigo", None) or
-                str(ofi) if ofi else None
-            )
+            # en el CSV, el Excel y services.py.
+            mora_dias = _mora_dias(p, hoy)
+            ofi_str   = _ofi_str(getattr(p, "oficina", None))
 
             payload.append({
                 "id":            p.id,
@@ -270,9 +285,9 @@ class BajaPolizaViewSet(viewsets.GenericViewSet):
 
         for p in queryset:
             cli       = getattr(p, "cliente", None)
+            # CSV histórico: nombre + apellido (mantiene el orden original de esta exportación).
             asegurado = f"{getattr(cli,'nombre','') or ''} {getattr(cli,'apellido','') or ''}".strip() if cli else ""
             min_vto   = getattr(p, "min_vto_impaga", None)
-            mora_dias = (hoy - min_vto).days if min_vto else 0
             writer.writerow([
                 getattr(p, "compania", ""),
                 getattr(p, "numero_poliza", ""),
@@ -281,7 +296,7 @@ class BajaPolizaViewSet(viewsets.GenericViewSet):
                 getattr(cli, "dni_cuit_cuil", "") if cli else "",
                 getattr(cli, "telefono", "")       if cli else "",
                 getattr(p, "oficina", ""),
-                mora_dias,
+                _mora_dias(p, hoy),
                 int(getattr(p, "impagas_count", 0)),
                 min_vto.strftime("%d/%m/%Y") if min_vto else "",
             ])
@@ -292,8 +307,7 @@ class BajaPolizaViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=["get"], url_path="counters")
     def counters(self, request, *args, **kwargs):
-        hoy = timezone.localdate()
-        qs  = self._base_queryset()
+        qs = self._base_queryset()
 
         total = qs.count()
 
@@ -371,7 +385,10 @@ class BajaPolizaViewSet(viewsets.GenericViewSet):
                         categoria="POLIZA",
                     )
             except Exception as e:
-                pass
+                logger.error(
+                    "[bajas.views] No se pudo cancelar la póliza %s al marcar REALIZADA: %s",
+                    poliza.id, e,
+                )
 
         return Response({
             "poliza_id":        poliza.id,
@@ -442,18 +459,13 @@ class BajaPolizaViewSet(viewsets.GenericViewSet):
         hoy  = timezone.localdate()
         fila = 3
 
-        def get_ofi_str(ofi):
-            if not ofi: return "—"
-            return str(getattr(ofi, "nombre", None) or getattr(ofi, "codigo", None) or ofi)
-
         for p in qs:
             cli       = getattr(p, "cliente", None)
             baja      = bajas_map.get(p.id)
-            min_vto   = getattr(p, "min_vto_impaga", None)
-            mora_dias = (hoy - min_vto).days if min_vto else 0
+            mora_dias = _mora_dias(p, hoy)
             estado_baja_txt = str(getattr(baja, "estado", "PENDIENTE ENVIO") if baja else "PENDIENTE ENVIO").replace("_", " ")
             vehiculo  = f"{getattr(p,'marca','') or ''} {getattr(p,'modelo','') or ''}".strip()
-            asegurado = f"{getattr(cli,'apellido','') or ''} {getattr(cli,'nombre','') or ''}".strip() if cli else ""
+            asegurado = _asegurado_apellido_nombre(cli)
 
             ws.write(fila, 0, getattr(p, "numero_poliza", "—") or "—", fmt_celda)
             ws.write(fila, 1, getattr(p, "compania", "—")      or "—", fmt_celda)
@@ -462,7 +474,7 @@ class BajaPolizaViewSet(viewsets.GenericViewSet):
             ws.write(fila, 4, asegurado or "—", fmt_celda)
             ws.write(fila, 5, getattr(cli, "dni_cuit_cuil", "—") if cli else "—", fmt_centro)
             ws.write(fila, 6, getattr(cli, "telefono",     "—") if cli else "—", fmt_centro)
-            ws.write(fila, 7, get_ofi_str(getattr(p, "oficina", None)), fmt_celda)
+            ws.write(fila, 7, _ofi_str(getattr(p, "oficina", None)) or "—", fmt_celda)
             ws.write(fila, 8, int(mora_dias), fmt_alerta if mora_dias > 30 else fmt_centro)
             ws.write(fila, 9, estado_baja_txt, fmt_centro)
             fila += 1
@@ -490,7 +502,6 @@ class BajaPolizaViewSet(viewsets.GenericViewSet):
         GET /api/bajas/operativo/digest-del-dia/
         Devuelve las pólizas en mora agrupadas por compañía para el panel del día.
         """
-        dias     = int(request.query_params.get("dias", 3))
         oficina  = request.query_params.get("oficina", "").strip()
         ofi_id   = int(oficina) if oficina.isdigit() else None
 
@@ -500,7 +511,7 @@ class BajaPolizaViewSet(viewsets.GenericViewSet):
             ofi = getattr(getattr(user, "perfil", None), "oficina", None)
             ofi_id = getattr(ofi, "id", None)
 
-        digest = construir_digest(dias_default=dias, oficina_id=ofi_id)
+        digest = construir_digest(oficina_id=ofi_id)
 
         grupos_data = [
             {
@@ -565,7 +576,6 @@ class BajaPolizaViewSet(viewsets.GenericViewSet):
         Botón "Enviar todo" del front. Manda el digest a todas las compañías pendientes.
         Body (opcional): { "dias": 3, "oficina": 1 }
         """
-        dias    = int(request.data.get("dias", 3))
         oficina = str(request.data.get("oficina", "") or "").strip()
         ofi_id  = int(oficina) if oficina.isdigit() else None
 
@@ -575,7 +585,7 @@ class BajaPolizaViewSet(viewsets.GenericViewSet):
             ofi    = getattr(getattr(user, "perfil", None), "oficina", None)
             ofi_id = getattr(ofi, "id", None)
 
-        resultados = enviar_todas_del_dia(dias_default=dias, oficina_id=ofi_id)
+        resultados = enviar_todas_del_dia(oficina_id=ofi_id)
         ok_count   = sum(1 for r in resultados if r["ok"])
 
         return Response({

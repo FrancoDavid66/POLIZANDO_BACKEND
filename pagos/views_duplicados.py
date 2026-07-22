@@ -26,6 +26,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 
 from .models import Pago
+from pagos.views_helpers import _get_seguridad_oficina_brute, _build_oficina_q_from_keys
 
 
 # Ventana (en segundos) para considerar dos pagos "casi idénticos" por cercanía de tiempo
@@ -58,26 +59,20 @@ class PagosDuplicadosAPIView(APIView):
     GET /api/pagos/auditoria/duplicados/?oficina=<id>
 
     Devuelve pagos sospechosos de estar duplicados, en 2 grupos.
-    Admin ve todas las oficinas; no-admin solo la suya.
+    Admin ve todas las oficinas (o una puntual con ?oficina=); no-admin
+    solo la suya. Mismo escudo de seguridad que el resto de pagos/ (antes
+    esta vista tenía su propia versión casera de esta misma lógica).
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
-        perfil = getattr(user, "perfil", None)
-        rol = getattr(perfil, "rol", None) if perfil else None
-        es_admin = bool(getattr(user, "is_superuser", False) or rol == "ADMIN")
+        oficina_keys = _get_seguridad_oficina_brute(request, request.query_params.get("oficina", ""))
+        if "BLOQUEADO" in oficina_keys:
+            return Response({"detail": "Acceso denegado"}, status=403)
 
         qs = Pago.objects.select_related("poliza", "poliza__cliente", "poliza__oficina")
-
-        # Escudo de oficina
-        oficina_param = (request.query_params.get("oficina") or "").strip()
-        if not es_admin:
-            ofi_propia = getattr(perfil, "oficina_id", None) if perfil else None
-            if ofi_propia:
-                qs = qs.filter(poliza__oficina_id=ofi_propia)
-        elif oficina_param and oficina_param.upper() != "ALL":
-            qs = qs.filter(poliza__oficina_id=oficina_param)
+        if oficina_keys:
+            qs = qs.filter(_build_oficina_q_from_keys(oficina_keys))
 
         pagos = list(qs.order_by("registrado_en"))
 

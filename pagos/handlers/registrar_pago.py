@@ -82,14 +82,6 @@ def _enviar_gracias_portal(poliza):
         print(f"[gracias_portal] ❌ WhatsApp NO enviado a {tel}: {info}")
 
 
-def _puede_cobrar_poliza(request, poliza):
-    # 🔓 ABIERTO: cualquier oficina puede cobrar la cuota de cualquier póliza.
-    #    El cliente sigue siendo de su oficina original, pero el cobro se puede
-    #    hacer desde cualquier sucursal. El INGRESO se registra en la oficina que
-    #    cobra (ver _oficina_que_cobra más abajo), no en la de la póliza.
-    return True
-
-
 def _oficina_que_cobra(request, poliza):
     """Oficina donde entra la plata = la del usuario que registra el pago.
     Si no se puede determinar (admin sin oficina, sin request), cae en la
@@ -120,12 +112,6 @@ def registrar_pago_handler(data, request=None):
             )
 
         poliza = Poliza.objects.get(id=poliza_id)
-        
-        if not _puede_cobrar_poliza(request, poliza):
-            return Response(
-                {"error": "Acceso denegado: Esta póliza pertenece a otra sucursal y no podés registrar su pago."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
 
         cuota = Cuota.objects.get(id=cuota_id, poliza=poliza)
 

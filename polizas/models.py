@@ -221,14 +221,6 @@ class Poliza(models.Model):
     # altas/renovaciones "del día" sin el desfase de la emisión.
     creado_en = models.DateTimeField(default=timezone.now, db_index=True)
 
-    # 📤 Envío de la póliza al cliente (para el panel de "Tareas del día").
-    # El empleado tilda cuando ya le mandó la póliza al cliente.
-    poliza_enviada = models.BooleanField(
-        default=False, db_index=True,
-        help_text="True si ya se le envió la póliza al cliente.",
-    )
-    poliza_enviada_en = models.DateTimeField(null=True, blank=True)
-
     # Gestión y documentos
     alertas = models.TextField(blank=True)
     archivo_poliza = models.FileField(upload_to="polizas/documentos/", blank=True, null=True)
@@ -605,45 +597,3 @@ class PolizaDocumento(models.Model):
     def __str__(self):
         lado = f" ({self.lado})" if self.lado else ""
         return f"Doc {self.tipo}{lado} - Poliza {self.poliza_id}"
-
-
-# -------------------- Motor de Comisiones --------------------
-class Comision(models.Model):
-    class Estado(models.TextChoices):
-        PENDIENTE = "PENDIENTE", "Pendiente de liquidar"
-        LIQUIDADA = "LIQUIDADA", "Pagada al vendedor"
-
-    # ¿A qué vendedor le pertenece el dinero?
-    vendedor = models.ForeignKey(
-        'usuarios.Perfil',
-        on_delete=models.CASCADE,
-        related_name='comisiones_ganadas'
-    )
-
-    # ¿De qué cuota proviene?
-    # (Usamos 'pagos.Cuota' como string para evitar errores de importación cruzada)
-    cuota = models.OneToOneField(
-        'pagos.Cuota',
-        on_delete=models.CASCADE,
-        related_name='comision_generada'
-    )
-
-    monto = models.DecimalField(max_digits=10, decimal_places=2)
-
-    estado = models.CharField(
-        max_length=20,
-        choices=Estado.choices,
-        default=Estado.PENDIENTE,
-        db_index=True
-    )
-
-    fecha_creacion = models.DateTimeField(auto_now_add=True)
-    fecha_liquidacion = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        ordering = ['-fecha_creacion']
-        verbose_name = "Comisión"
-        verbose_name_plural = "Comisiones"
-
-    def __str__(self):
-        return f"Comisión ${self.monto} - Vendedor: {self.vendedor} (Cuota {self.cuota_id})"

@@ -1,7 +1,7 @@
 # polizas/services/bajas.py
 from datetime import timedelta, date
 
-from django.db.models import F, Value, DateField
+from django.db.models import F, DateField
 from django.db.models.functions import Coalesce, Cast
 from django.utils import timezone
 

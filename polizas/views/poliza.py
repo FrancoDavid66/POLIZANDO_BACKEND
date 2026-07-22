@@ -37,7 +37,6 @@ from polizas.serializers import (
     PolizaSerializer,
     PolizaListSerializer,
     PolizaRenovacionListSerializer,
-    PolizaVencimientoListSerializer,
 )
 from polizas.handlers.create_poliza import handle_create_poliza
 from pagos.models import Cuota
@@ -61,7 +60,6 @@ from usuarios.mixins import MultiTenantMixin
 from .mixins import (
     PolizaCatalogosMixin,
     PolizaExportsMixin,
-    PolizaVencimientosMixin,
     PolizaRenovacionesMixin,
     PolizaDuplicadosMixin,
     PolizaKpisMixin,
@@ -134,7 +132,6 @@ class PolizaViewSet(
     MultiTenantMixin,  # 🚀 INYECTAMOS EL FILTRO MAESTRO AQUÍ (siempre primero)
     PolizaCatalogosMixin,
     PolizaExportsMixin,
-    PolizaVencimientosMixin,
     PolizaRenovacionesMixin,
     PolizaDuplicadosMixin,
     PolizaKpisMixin,
@@ -196,8 +193,6 @@ class PolizaViewSet(
             return PolizaListSerializer
         if getattr(self, "action", "") in {"renovaciones"}:
             return PolizaRenovacionListSerializer
-        if getattr(self, "action", "") in {"vencimientos"}:
-            return PolizaVencimientoListSerializer
         return PolizaSerializer
 
     def _hist_log(self, **kwargs):
@@ -246,7 +241,7 @@ class PolizaViewSet(
         action = getattr(self, "action", "")
 
         include_finalizadas = _to_bool(params.get("include_finalizadas") or params.get("incluir_finalizadas"))
-        if action in {"vencimientos", "vencimientos_resumen", "renovaciones", "renovaciones_resumen"} and not include_finalizadas:
+        if action in {"renovaciones", "renovaciones_resumen"} and not include_finalizadas:
             qs = qs.exclude(estado__iexact="finalizada")
 
         # ========== Guard: si es LIST y NO hay filtros => no traer el universo ==========
@@ -276,7 +271,7 @@ class PolizaViewSet(
             if (not allow_all) and (not has_search) and (not has_filters):
                 return qs.none()
 
-        if action in {"list", "versiones_por_patente", "renovaciones", "vencimientos", "vencimientos_resumen"}:
+        if action in {"list", "versiones_por_patente", "renovaciones"}:
             qs = qs.select_related("cliente", "compania_obj")
 
             impagas_count_sq = (
@@ -785,116 +780,6 @@ class PolizaViewSet(
                 "next": page + 1 if page < total_pages else None,
                 "previous": page - 1 if page > 1 else None,
                 "results": resultados,
-            },
-            status=status.HTTP_200_OK,
-        )
-
-    # ══════════════════════════════════════════════════════════════════════
-    # 🏢 VERIFICACIÓN CON LA COMPAÑÍA (bandeja manual)
-    # ══════════════════════════════════════════════════════════════════════
-    @action(detail=False, methods=["get"], url_path="verificacion-compania", permission_classes=[IsAuthenticated])
-    def verificacion_compania_listado(self, request):
-        """
-        GET /api/polizas/verificacion-compania/?estado=pendiente|ok|no_figura
-        Lista las pólizas para la bandeja de verificación con la compañía.
-        Muestra TODAS las pólizas sin verificar (estén al día o no);
-        'al_dia' se devuelve como bandera informativa para la UI.
-        Respeta el escudo de oficina (get_queryset ya lo aplica vía MultiTenantMixin).
-        """
-        from pagos.models import Cuota
-
-        estado = (request.query_params.get("estado") or "pendiente").strip().lower()
-        hoy = timezone.localdate()
-
-        # Base: SOLO el escudo de oficina del MultiTenantMixin.
-        # 🔧 FIX: NO usamos self.get_queryset() porque ese lee el parámetro
-        # ?estado= y lo interpreta como el estado de la póliza
-        # (filtra estado="pendiente" → 0 resultados). El MultiTenantMixin
-        # solo respeta el alcance por oficina, que es lo que queremos acá.
-        qs = MultiTenantMixin.get_queryset(self).select_related("cliente", "oficina")
-
-        # Excluir pólizas dadas de baja / canceladas / anuladas
-        qs = qs.exclude(estado__in=["cancelada", "anulada", "baja", "finalizada"])
-
-        # Filtro por estado de verificación
-        if estado == "ok":
-            qs = qs.filter(verificacion_compania="OK")
-        elif estado in ("no_figura", "nofigura"):
-            qs = qs.filter(verificacion_compania="NO_FIGURA")
-        else:  # pendiente (sin verificar)
-            qs = qs.filter(verificacion_compania="")
-
-        # IDs de pólizas con mora REAL → NO están al día.
-        # Mora = la cobertura (vto de la última cuota PAGADA) ya venció y quedan cuotas impagas.
-        # Si nunca pagó nada, la mora arranca en el vto de su primera cuota impaga.
-        polizas_con_mora = set(
-            Poliza.objects.annotate(
-                _cobertura=Max("cuotas__fecha_vencimiento", filter=Q(cuotas__pagado=True)),
-                _impagas=Count("cuotas", filter=Q(cuotas__pagado=False)),
-                _primer_impaga=Min("cuotas__fecha_vencimiento", filter=Q(cuotas__pagado=False)),
-            )
-            .filter(_impagas__gt=0)
-            .filter(Q(_cobertura__lt=hoy) | Q(_cobertura__isnull=True, _primer_impaga__lt=hoy))
-            .values_list("id", flat=True)
-        )
-
-        resultados = []
-        for p in qs.order_by("-fecha_emision", "-id"):
-            al_dia = p.id not in polizas_con_mora
-            # 🔧 FIX: ya NO se ocultan las pólizas con cuotas atrasadas.
-            # Antes esto vaciaba la bandeja porque las altas nuevas suelen
-            # tener la 1ª cuota impaga. 'al_dia' queda solo como bandera visual.
-
-            cli = getattr(p, "cliente", None)
-            resultados.append({
-                "id": p.id,
-                "numero_poliza": p.numero_poliza or "",
-                "patente": p.patente or "",
-                "compania": p.compania or "",
-                "marca": p.marca or "",
-                "modelo": p.modelo or "",
-                "cliente": (
-                    f"{getattr(cli, 'apellido', '') or ''} {getattr(cli, 'nombre', '') or ''}".strip()
-                    if cli else ""
-                ),
-                "oficina_nombre": getattr(getattr(p, "oficina", None), "nombre", "") or "",
-                "al_dia": al_dia,
-                "verificacion_compania": p.verificacion_compania or "",
-                "fecha_emision": p.fecha_emision.isoformat() if p.fecha_emision else None,
-            })
-
-        return Response(
-            {"estado": estado, "total": len(resultados), "resultados": resultados},
-            status=status.HTTP_200_OK,
-        )
-
-    @action(detail=True, methods=["post"], url_path="marcar-verificacion-compania", permission_classes=[IsAuthenticated])
-    def marcar_verificacion_compania(self, request, pk=None):
-        """
-        POST /api/polizas/:id/marcar-verificacion-compania/
-        Body: { "estado": "OK" | "NO_FIGURA" | "" }
-          - "OK"        → verificada en la compañía
-          - "NO_FIGURA" → no figura / datos no coinciden (bandera roja)
-          - ""          → revertir a "sin verificar" (vuelve a la pila)
-        """
-        poliza = self.get_object()
-        nuevo = (request.data.get("estado") or "").strip().upper()
-
-        if nuevo not in ("OK", "NO_FIGURA", ""):
-            return Response(
-                {"detail": "estado inválido. Use 'OK', 'NO_FIGURA' o '' (revertir)."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        poliza.verificacion_compania = nuevo
-        poliza.verificacion_compania_en = timezone.now() if nuevo else None
-        poliza.save(update_fields=["verificacion_compania", "verificacion_compania_en"])
-
-        return Response(
-            {
-                "ok": True,
-                "poliza_id": poliza.id,
-                "verificacion_compania": poliza.verificacion_compania,
             },
             status=status.HTTP_200_OK,
         )

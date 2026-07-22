@@ -1,11 +1,5 @@
 # solicitudes/views.py
-import io
-from datetime import timedelta
-
-from django.conf import settings
 from django.utils import timezone
-from django.http import HttpResponse
-from django.db.models import Q, Case, When, IntegerField, Sum
 
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
@@ -13,9 +7,6 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from django_filters.rest_framework import DjangoFilterBackend
-
-from PIL import Image, ImageDraw, ImageFont
-import qrcode
 
 from .models import (
     SolicitudSeguro,
@@ -57,8 +48,6 @@ CLIENTE_DOC_FIELDS = {
     "pasaporte_dorso": "archivo_pasaporte_dorso",
 }
 
-RETENCION_TERMINADA_DIAS = 7
-
 
 def _tarea_flag(s, key: str) -> bool:
     if hasattr(s, key):
@@ -95,21 +84,6 @@ def _map_tipo_solicitud_a_poliza(s_tipo: str):
     return None
 
 
-_SOLICITUD_FIELDS = {f.name for f in SolicitudSeguro._meta.get_fields()}
-_HAS_ALTA_COMPANIA = "alta_compania" in _SOLICITUD_FIELDS
-_HAS_ENVIAR_POLIZA = "enviar_poliza" in _SOLICITUD_FIELDS
-
-
-def _expire_constancias():
-    """1 query. Llamar solo en endpoints 'livianos' (resumen/counters/pendientes), no en cada request."""
-    now_ = timezone.now()
-    SolicitudSeguro.objects.filter(
-        estado=EstadoSolicitud.VIGENTE_24H,
-        fin__isnull=False,
-        fin__lte=now_,
-    ).update(estado=EstadoSolicitud.VENCIDA)
-
-
 class SolicitudSeguroViewSet(viewsets.ModelViewSet):
     queryset = SolicitudSeguro.objects.all().order_by("-creado_en")
     serializer_class = SolicitudSeguroSerializer
@@ -123,29 +97,29 @@ class SolicitudSeguroViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ("estado", "cliente_dni", "vehiculo_patente", "responsable", "responsable_empleado", "responsable_nombre")
     search_fields = ("cliente_nombre", "cliente_dni", "vehiculo_patente", "codigo", "responsable", "responsable_nombre")
-    ordering_fields = ("creado_en", "actualizado_en", "asignado_en", "fin")
+    ordering_fields = ("creado_en", "actualizado_en", "asignado_en")
 
     def get_queryset(self):
         qs = super().get_queryset()
         user = self.request.user
-        
+
         if not user.is_authenticated:
             return qs.none()
 
         is_admin = user.is_superuser or getattr(user.perfil, 'rol', '') == 'ADMIN'
-        
+
         if not is_admin:
             ofi_id = getattr(user.perfil, 'oficina_id', None)
             if ofi_id:
                 qs = qs.filter(oficina_id=ofi_id)
-                
+
         qs = qs.select_related("responsable_empleado")
         return qs
 
     def perform_create(self, serializer):
         user = self.request.user
         is_admin = user.is_superuser or getattr(user.perfil, 'rol', '') == 'ADMIN'
-        
+
         if is_admin:
             oficina_id = self.request.data.get('oficina')
             serializer.save(oficina_id=oficina_id)
@@ -157,23 +131,23 @@ class SolicitudSeguroViewSet(viewsets.ModelViewSet):
     def crear_completo(self, request):
         user = request.user
         is_admin = user.is_superuser or getattr(user.perfil, 'rol', '') == 'ADMIN'
-        
+
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
-        
+
         ofi_id_empleado = None
         if not is_admin:
             ofi_id_empleado = getattr(user.perfil, 'oficina_id', None)
             if ofi_id_empleado:
                 data['oficina'] = ofi_id_empleado
-        
+
         ser = CrearCompletoSerializer(data=data, context={'request': request})
         ser.is_valid(raise_exception=True)
-        
+
         if not is_admin and ofi_id_empleado:
             result = ser.save(oficina_id=ofi_id_empleado)
         else:
             result = ser.save()
-            
+
         return Response(result, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])
@@ -252,7 +226,7 @@ class SolicitudSeguroViewSet(viewsets.ModelViewSet):
                     if not url: continue
                     key = f"{target_tipo}|{url}"
                     if key in existentes: continue
-                    
+
                     item = PolizaDocumento.objects.create(
                         poliza=poliza, tipo=target_tipo, url=url,
                         public_id=getattr(d, "public_id", ""),
@@ -333,7 +307,7 @@ class SolicitudSeguroViewSet(viewsets.ModelViewSet):
             nombre = (request.data.get("responsable") or "").strip()
             if not nombre: return Response({"detail": "Responsable requerido."}, status=400)
             s.tomar(nombre)
-        
+
         s.save(update_fields=["responsable", "responsable_nombre", "responsable_empleado", "asignado_en"])
         return Response(self.get_serializer(s).data)
 
@@ -346,73 +320,8 @@ class SolicitudSeguroViewSet(viewsets.ModelViewSet):
         s.save()
         return Response(self.get_serializer(s).data)
 
-    @action(detail=True, methods=["post"])
-    def enviar(self, request, pk=None):
-        s: SolicitudSeguro = self.get_object()
-        faltantes = []
-        if not getattr(s, "telefono", None):
-            faltantes.append("telefono")
-        if not getattr(s, "cliente_nombre", None):
-            faltantes.append("cliente_nombre")
-        if not getattr(s, "cobertura_solicitada", None):
-            faltantes.append("cobertura_solicitada")
-        if faltantes:
-            return Response({"detail": f"Faltan campos requeridos: {', '.join(faltantes)}"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if s.estado in (EstadoSolicitud.EN_REVISION, EstadoSolicitud.CONVERTIDA, EstadoSolicitud.CANCELADA, EstadoSolicitud.VENCIDA):
-            data = self.get_serializer(s).data
-            return Response({"detail": "La solicitud ya fue enviada/procesada.", "solicitud": data}, status=status.HTTP_200_OK)
-
-        s.estado = EstadoSolicitud.EN_REVISION
-        s.save(update_fields=["estado"])
-        return Response(self.get_serializer(s).data)
-
-    @action(detail=True, methods=["post"])
-    def emitir_constancia(self, request, pk=None):
-        base_verify_url = request.data.get("base_verify_url") or getattr(settings, "PUBLIC_VERIFY_URL", "/public/solicitudes")
-        s: SolicitudSeguro = self.get_object()
-        s.emitir_constancia_24h(base_verify_url=base_verify_url)
-        s.save()
-        return Response(self.get_serializer(s).data)
-
-    @action(detail=True, methods=["post"])
-    def cancelar(self, request, pk=None):
-        s: SolicitudSeguro = self.get_object()
-        s.estado = EstadoSolicitud.CANCELADA
-        s.save(update_fields=["estado"])
-        return Response(self.get_serializer(s).data)
-
-    @action(detail=True, methods=["post"])
-    def convertir(self, request, pk=None):
-        s: SolicitudSeguro = self.get_object()
-        s.estado = EstadoSolicitud.CONVERTIDA
-        if request.data.get("poliza_id"): s.poliza_id = request.data.get("poliza_id")
-        s.save()
-        return Response(self.get_serializer(s).data)
-
-    @action(detail=False, methods=["get"])
-    def resumen(self, request):
-        _expire_constancias()
-        ahora = timezone.now()
-        qs = self.get_queryset()
-        agg = qs.aggregate(
-            total=Sum(Case(When(id__isnull=False, then=1), output_field=IntegerField())),
-            borrador_o_revision=Sum(Case(When(estado__in=[EstadoSolicitud.BORRADOR, EstadoSolicitud.EN_REVISION], then=1), default=0, output_field=IntegerField())),
-            vigentes_24h=Sum(Case(When(estado=EstadoSolicitud.VIGENTE_24H, fin__gt=ahora, then=1), default=0, output_field=IntegerField())),
-            vencidas=Sum(Case(When(estado=EstadoSolicitud.VENCIDA, then=1), When(estado=EstadoSolicitud.VIGENTE_24H, fin__lte=ahora, then=1), default=0, output_field=IntegerField())),
-            convertidas=Sum(Case(When(estado=EstadoSolicitud.CONVERTIDA, then=1), default=0, output_field=IntegerField())),
-        )
-        return Response({
-            "por_asegurar": (int(agg.get('borrador_o_revision') or 0) + int(agg.get('vigentes_24h') or 0)),
-            "vigentes_24h": int(agg.get('vigentes_24h') or 0),
-            "vencidas": int(agg.get('vencidas') or 0),
-            "convertidas": int(agg.get('convertidas') or 0),
-            "total": int(agg.get('total') or 0),
-        })
-
     @action(detail=False, methods=["get"])
     def counters(self, request):
-        _expire_constancias()
         qs = self.get_queryset().exclude(estado=EstadoSolicitud.TERMINADA)
         return Response({
             "pendiente_alta": qs.filter(alta_compania=False).count(),
@@ -421,34 +330,10 @@ class SolicitudSeguroViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"])
     def pendientes(self, request):
-        _expire_constancias()
         tipo = request.query_params.get("tipo", "").lower()
         key = "alta_compania" if "alta" in tipo else "enviar_poliza"
         qs = self.get_queryset().exclude(estado=EstadoSolicitud.TERMINADA).filter(**{f"{key}": False})
         return Response([_build_item_brief(s) for s in qs[:200]])
-
-    @action(detail=True, methods=["get"])
-    def comprobante_png(self, request, pk=None):
-        s: SolicitudSeguro = self.get_object()
-        if s.estado not in (EstadoSolicitud.VIGENTE_24H, EstadoSolicitud.VENCIDA, EstadoSolicitud.CONVERTIDA):
-            base_verify_url = getattr(settings, "PUBLIC_VERIFY_URL", "/public/solicitudes")
-            s.emitir_constancia_24h(base_verify_url=base_verify_url)
-            s.save()
-
-        W, H = 1240, 1754
-        img = Image.new("RGB", (W, H), (255, 255, 255))
-        draw = ImageDraw.Draw(img)
-        # 🔧 Banner con marca de Polizando (antes decía "Estudio Thames" en dorado).
-        #    Verde primario #1F7A4C = (31, 122, 76); texto en crema #F4EFE6 = (244, 239, 230).
-        draw.rectangle([0, 0, W, 160], fill=(31, 122, 76))
-        draw.text((60, 60), "Polizando", fill=(244, 239, 230))
-        
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        resp = HttpResponse(buf.read(), content_type="image/png")
-        resp["Content-Disposition"] = f'attachment; filename="constancia_{s.codigo}.png"'
-        return resp
 
 
 class SolicitudDocumentoViewSet(viewsets.ModelViewSet):
@@ -487,18 +372,18 @@ class EmpleadoViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         user = self.request.user
-        
+
         if not user.is_authenticated:
             return qs.none()
-            
+
         # 🚀 CORRECCIÓN CLAVE: Verificación segura usando "hasattr"
         is_admin = user.is_superuser or (hasattr(user, 'perfil') and user.perfil.rol == 'ADMIN')
-        
+
         if not is_admin:
             ofi_id = user.perfil.oficina_id if hasattr(user, 'perfil') else None
             if ofi_id:
                 qs = qs.filter(oficina_id=ofi_id)
-                
+
         return qs
 
     @action(detail=False, methods=["get"])

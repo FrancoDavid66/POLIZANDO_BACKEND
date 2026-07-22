@@ -3,7 +3,7 @@ from .models import SolicitudSeguro, SolicitudDocumento
 
 @admin.register(SolicitudSeguro)
 class SolicitudSeguroAdmin(admin.ModelAdmin):
-    list_display = ("codigo", "cliente_nombre", "cliente_dni", "vehiculo_patente", "estado", "inicio", "fin", "creado_en")
+    list_display = ("codigo", "cliente_nombre", "cliente_dni", "vehiculo_patente", "estado", "creado_en")
     list_filter = ("estado", "creado_en")
     search_fields = ("codigo", "cliente_nombre", "cliente_dni", "vehiculo_patente", "vehiculo_modelo", "vehiculo_marca")
 

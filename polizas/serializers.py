@@ -397,51 +397,6 @@ class PolizaRenovacionListSerializer(serializers.ModelSerializer):
             return None
 
 
-class PolizaVencimientoListSerializer(serializers.ModelSerializer):
-    cliente = serializers.SerializerMethodField(read_only=True)
-    cliente_id = serializers.IntegerField(read_only=True)
-    compania_nombre = serializers.SerializerMethodField(read_only=True)
-    cliente_telefono = serializers.SerializerMethodField(read_only=True)
-    oficina_nombre = serializers.CharField(source='oficina.nombre', read_only=True)
-    vto_referencia = serializers.SerializerMethodField()
-    dias_para_vencer = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Poliza
-        fields = ["id", "numero_poliza", "sin_numero", "compania", "compania_nombre", "oficina", "oficina_nombre", "cliente", "cliente_id", "cliente_telefono", "patente", "marca", "modelo", "estado", "fase", "fecha_emision", "primer_pago", "fecha_vencimiento", "cantidad_cuotas", "precio_cuota", "vto_referencia", "dias_para_vencer"]
-
-    def get_cliente(self, obj):
-        c = getattr(obj, "cliente", None)
-        if not c:
-            return None
-        tel = _get_cliente_telefono_robusto(c)
-        return {"id": getattr(c, "id", None), "apellido": getattr(c, "apellido", "") or "", "nombre": getattr(c, "nombre", "") or "", "dni": getattr(c, "dni", "") or getattr(c, "dni_cuit_cuil", "") or getattr(c, "documento", "") or "", "telefono": tel or ""}
-
-    def get_cliente_telefono(self, obj):
-        c = getattr(obj, "cliente", None)
-        return _get_cliente_telefono_robusto(c)
-
-    def get_compania_nombre(self, obj):
-        return _get_compania_nombre_robusto(obj)
-
-    def get_vto_referencia(self, obj):
-        v = _safe_annot(obj, "vto_referencia", None)
-        if v is not None:
-            return v
-        return _safe_annot(obj, "ultima_cuota_vencimiento", None) or getattr(obj, "fecha_vencimiento", None)
-
-    def get_dias_para_vencer(self, obj):
-        vto = self.get_vto_referencia(obj)
-        if not vto:
-            return None
-        hoy = timezone.localdate()
-        try:
-            vto_date = vto.date() if hasattr(vto, "date") else vto
-            return int((vto_date - hoy).days)
-        except Exception:
-            return None
-
-
 class PolizaSerializer(serializers.ModelSerializer):
     cliente = ClienteBasicSerializer(read_only=True)
     cliente_id = serializers.PrimaryKeyRelatedField(source="cliente", queryset=Cliente.objects.all(), write_only=True)

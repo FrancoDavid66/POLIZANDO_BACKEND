@@ -1,4 +1,5 @@
 # polizas/handlers/renovacion.py
+import logging
 from datetime import datetime, date
 from calendar import monthrange
 from typing import Optional
@@ -32,28 +33,10 @@ except Exception:
     EstadoAdhesion = None  # type: ignore
 
 
-# --- Relativedelta (con fallback si falta python-dateutil) ---
-try:
-    from dateutil.relativedelta import relativedelta  # type: ignore
+# 🔧 add_months unificado (antes duplicado acá con fallback dateutil).
+from polizas.utils.fechas import add_months as _add_months
 
-    def _add_months(d: date, months: int) -> date:
-        return d + relativedelta(months=months)
-
-except Exception:
-    def _add_months(d: date, months: int) -> date:
-        """
-        Fallback sin dateutil: suma meses preservando el día en lo posible.
-        Si el mes destino no tiene ese día, usa el último día del mes.
-        """
-        if months == 0:
-            return d
-        m = (d.month - 1) + months
-        y = d.year + (m // 12)
-        mm = (m % 12) + 1
-        last_day = monthrange(y, mm)[1]
-        dd = min(d.day, last_day)
-        return date(y, mm, dd)
-
+logger = logging.getLogger(__name__)
 
 # ---------- Helpers ----------
 
@@ -139,8 +122,7 @@ def _resolver_cuotas_para_renovar(compania_nueva, cobertura, original, override=
     orig_cuotas = getattr(original, "cantidad_cuotas", None)
     if orig_cuotas and int(orig_cuotas) > 0:
         # Heredar también el flag de cuponera: si la original tiene cupones generados,
-        # la nueva también los lleva.
-        from polizas.models import CuponRobo
+        # la nueva también los lleva. (CuponRobo ya está importado arriba.)
         tenia_cupones = CuponRobo.objects.filter(poliza=original).exists()
         return (int(orig_cuotas), tenia_cupones, "POLIZA_ORIGINAL")
 
@@ -450,7 +432,7 @@ def _duplicar_con_cuotas(request, original: Poliza) -> Response:
             categoria="POLIZA",
         )
     except Exception as e:
-        print(f"Error al registrar historial de nueva póliza: {e}")
+        logger.error("[renovacion] Error al registrar historial de nueva póliza: %s", e)
 
     # ✅ 5b) Transferir adhesión de grúa (si corresponde)
     _transferir_adhesion_grua(request, original, nueva)
@@ -461,12 +443,11 @@ def _duplicar_con_cuotas(request, original: Poliza) -> Response:
     #    manual (`nuevo_precio`, 0 si no se cargó nada en el modal).
     for i in range(1, cantidad_cuotas + 1):
         venc = _add_months(primer_pago, i - 1)
-        monto_i = nuevo_precio
         Cuota.objects.create(
             poliza=nueva,
             cuota_nro=i,
             fecha_vencimiento=venc,
-            monto=monto_i,
+            monto=nuevo_precio,
             pagado=False,
         )
 
@@ -517,7 +498,7 @@ def _duplicar_con_cuotas(request, original: Poliza) -> Response:
             except Exception:
                 pass
     except Exception as e:
-        print(f"Error al mover fotos/documentos en renovación: {e}")
+        logger.error("[renovacion] Error al mover fotos/documentos en renovación: %s", e)
 
     # 7) Cerrar original
     if original.estado != "finalizada":
@@ -536,7 +517,7 @@ def _duplicar_con_cuotas(request, original: Poliza) -> Response:
                 categoria="POLIZA",
             )
         except Exception as e:
-            print(f"Error al registrar historial de póliza vieja: {e}")
+            logger.error("[renovacion] Error al registrar historial de póliza vieja: %s", e)
 
     return Response(
         PolizaSerializer(nueva, context={"request": request}).data,

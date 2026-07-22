@@ -150,18 +150,6 @@ def es_nre(compania):
     return "nre" in (compania or "").strip().lower()
 
 
-def es_talita(oficina=None):
-    """🔧 STUB — Polizando no tiene sucursales, así que esto siempre es False.
-
-    Se mantiene la función (en vez de borrarla del todo) porque otros
-    archivos ya la importaban (usuarios/precios_views.py y los comandos de
-    ajuste de precios) y no quiero que un import roto tumbe el arranque de
-    Django de nuevo. Si en algún momento se confirma que ya nadie la usa,
-    se puede borrar.
-    """
-    return False
-
-
 def precio_vigente(tipo, fecha=None, oficina=None):
     """Precio de la categoría a una fecha (el que pagan las cuotas 2 en adelante,
     y el que muestra una póliza activa). Devuelve None si no está en la lista.

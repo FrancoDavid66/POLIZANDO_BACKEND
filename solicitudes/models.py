@@ -1,6 +1,5 @@
 from django.db import models
 from django.utils import timezone
-from datetime import timedelta
 
 # 🚀 IMPORTAMOS OFICINA PARA EL BLINDAJE MULTI-TENANT
 from usuarios.models import Oficina
@@ -89,16 +88,16 @@ def now():
 # ---------------- Catálogo de Empleados (Responsables) ----------------
 class Empleado(models.Model):
     nombre = models.CharField(max_length=80, db_index=True)
-    
+
     # 🚀 VÍNCULO MULTI-TENANT: Cada responsable pertenece a una oficina específica
     oficina = models.ForeignKey(
-        Oficina, 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True, 
+        Oficina,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name='empleados_solicitudes'
     )
-    
+
     activo = models.BooleanField(default=True)
     creado_en = models.DateTimeField(default=now)
     actualizado_en = models.DateTimeField(auto_now=True)
@@ -143,10 +142,10 @@ class SolicitudSeguro(models.Model):
 
     # 🏢 CAMBIO CLAVE PARA VISIBILIDAD: Relación ForeignKey real para el Escudo Multi-tenant
     oficina = models.ForeignKey(
-        Oficina, 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True, 
+        Oficina,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name="solicitudes_sucursal"
     )
 
@@ -158,8 +157,6 @@ class SolicitudSeguro(models.Model):
     )
 
     estado = models.CharField(max_length=16, choices=EstadoSolicitud.choices, default=EstadoSolicitud.BORRADOR)
-    inicio = models.DateTimeField(null=True, blank=True)
-    fin = models.DateTimeField(null=True, blank=True)
 
     responsable_nombre = models.CharField(
         max_length=80,
@@ -173,7 +170,6 @@ class SolicitudSeguro(models.Model):
     )
 
     responsable = models.CharField(max_length=80, blank=True, db_index=True)
-    qr_payload = models.URLField(max_length=512, blank=True)
     poliza_id = models.IntegerField(null=True, blank=True)
     observaciones = models.TextField(blank=True)
     prioridad = models.CharField(max_length=16, default="NORMAL", blank=True)
@@ -205,32 +201,11 @@ class SolicitudSeguro(models.Model):
         return self.codigo or f"Solicitud #{self.pk}"
 
     @property
-    def cliente(self):
-        return None
-
-    @property
-    def vigente(self):
-        now_ = _now()
-        return self.estado == EstadoSolicitud.VIGENTE_24H and (self.fin and self.fin > now_)
-
-    @property
     def asignada(self):
         return bool(self.responsable_nombre or self.responsable)
 
     def fotos_obligatorias(self) -> set[str]:
         return set()
-
-    def emitir_constancia_24h(self, base_verify_url="/public/solicitudes"):
-        now_ = _now()
-        self.inicio = now_
-        self.fin = now_ + timedelta(hours=12)
-        self.estado = EstadoSolicitud.VIGENTE_24H
-        if not self.codigo:
-            super().save()
-            self.codigo = f"ST-{now_:%Y%m}-{self.id:06d}"
-        base = (base_verify_url or "/public/solicitudes").rstrip("/")
-        self.qr_payload = f"{base}/{self.id}/verificar/"
-        return self
 
     def _match_empleado(self, nombre: str):
         n = (nombre or "").strip()
@@ -259,11 +234,6 @@ class SolicitudSeguro(models.Model):
         self.responsable = self.responsable_nombre
         self.asignado_en = _now() if self.responsable_nombre else None
         return self
-
-    def caducar_si_corresponde(self):
-        now_ = _now()
-        if self.estado == EstadoSolicitud.VIGENTE_24H and self.fin and self.fin <= now_:
-            self.estado = EstadoSolicitud.VENCIDA
 
     def documentos_queryset(self):
         return self.documentos.all()
@@ -296,8 +266,6 @@ class SolicitudSeguro(models.Model):
             self.responsable = ""
         else:
             self.responsable = self.responsable_nombre
-
-        self.caducar_si_corresponde()
 
         super().save(*args, **kwargs)
 

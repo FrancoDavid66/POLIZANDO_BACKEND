@@ -15,15 +15,14 @@ urlpatterns = [
     path('api/', include('clientes.urls')),
     path('api/', include('polizas.urls')),
 
-    # 🆕 APP DE TAREAS (panel "Tareas del día")
-    path('api/', include('tareas.urls')),
+  
 
     path('api/', include('pagos.urls')),
     path('api/', include('siniestros.urls')),
     path('api/', include('balanzes.urls')),
 
     path('api/', include('solicitudes.urls')),
-    path('public/solicitudes/', include('solicitudes.public_urls')),
+  
     path('public/portal/', include('clientes.public_urls')),  # 🆕 Portal del asegurado
 
     path('api/notificaciones/', include('notificaciones.urls')),

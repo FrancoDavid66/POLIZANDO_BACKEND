@@ -1,11 +1,8 @@
 # clientes/views.py  ✅ BLINDADO MULTI-TENANT (ESTRICTO POR SUCURSAL)
 
 from decimal import Decimal
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
 
-from django.db import transaction, connection, models
-from django.core.exceptions import FieldError
+from django.db import connection, models
 from django.db.models import (
     Q, Count, Sum, Max, Value, IntegerField, DecimalField, F,
     Case, When, ExpressionWrapper, FloatField, Func, DurationField, DateTimeField
@@ -28,8 +25,6 @@ from siniestros.serializers import SiniestroSerializer
 
 from pagos.models import Pago, Cuota
 from pagos.serializers import PagoSerializer
-
-from polizas.models import Poliza
 
 
 def _to_bool(v) -> bool:
@@ -101,6 +96,21 @@ def _q_incompleto():
     return total
 
 
+def _dup_key_expr(por: str):
+    """Expresión de clave para agrupar duplicados según ?por= (dni|email|telefono|nombre)."""
+    if por == "email":
+        return Lower(Trim(Coalesce(F("email"), Value(""))))
+    if por == "telefono":
+        return _norm_digits_expr(Trim(Coalesce(F("telefono"), Value(""))))
+    if por in {"nombre_nacimiento", "nombre"}:
+        return Concat(
+            Lower(Trim(Coalesce(F("apellido"), Value("")))), Value("|"),
+            Lower(Trim(Coalesce(F("nombre"), Value("")))), Value("|"),
+            Cast(F("fecha_nacimiento"), output_field=models.CharField()),
+        )
+    return _norm_digits_expr(Trim(Coalesce(F("dni_cuit_cuil"), Value(""))))
+
+
 class ClienteViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
@@ -142,9 +152,6 @@ class ClienteViewSet(viewsets.ModelViewSet):
         Solo los administradores pueden ver todos o filtrar.
         Los empleados SOLO ven los clientes de su propia oficina.
         """
-        user = self.request.user
-        es_admin = user.is_superuser or (hasattr(user, 'perfil') and user.perfil.rol == 'ADMIN')
-
         # 🔓 ABIERTO: admin y empleados de oficina ven/operan con TODOS los clientes.
         #    Un cliente sigue perteneciendo a su oficina original, pero cualquier
         #    sucursal puede verlo y operar (circula entre oficinas). La plata se
@@ -303,18 +310,7 @@ class ClienteViewSet(viewsets.ModelViewSet):
         por = (request.query_params.get("por") or "dni").strip().lower()
         qs = self._dup_base_qs()
 
-        if por == "email":
-            key_expr = Lower(Trim(Coalesce(F("email"), Value(""))))
-        elif por == "telefono":
-            key_expr = _norm_digits_expr(Trim(Coalesce(F("telefono"), Value(""))))
-        elif por in {"nombre_nacimiento", "nombre"}:
-            key_expr = Concat(
-                Lower(Trim(Coalesce(F("apellido"), Value("")))), Value("|"),
-                Lower(Trim(Coalesce(F("nombre"), Value("")))), Value("|"),
-                Cast(F("fecha_nacimiento"), output_field=models.CharField()),
-            )
-        else:
-            key_expr = _norm_digits_expr(Trim(Coalesce(F("dni_cuit_cuil"), Value(""))))
+        key_expr = _dup_key_expr(por)
 
         qs2 = qs.annotate(_dup_key=key_expr).exclude(_dup_key__isnull=True).exclude(_dup_key__exact="")
         groups = qs2.values("_dup_key").annotate(c=Count("id")).filter(c__gt=1)
@@ -329,18 +325,7 @@ class ClienteViewSet(viewsets.ModelViewSet):
         por = (request.query_params.get("por") or "dni").strip().lower()
         qs = self._dup_base_qs()
 
-        if por == "email":
-            key_expr = Lower(Trim(Coalesce(F("email"), Value(""))))
-        elif por == "telefono":
-            key_expr = _norm_digits_expr(Trim(Coalesce(F("telefono"), Value(""))))
-        elif por in {"nombre_nacimiento", "nombre"}:
-            key_expr = Concat(
-                Lower(Trim(Coalesce(F("apellido"), Value("")))), Value("|"),
-                Lower(Trim(Coalesce(F("nombre"), Value("")))), Value("|"),
-                Cast(F("fecha_nacimiento"), output_field=models.CharField()),
-            )
-        else:
-            key_expr = _norm_digits_expr(Trim(Coalesce(F("dni_cuit_cuil"), Value(""))))
+        key_expr = _dup_key_expr(por)
 
         qs2 = qs.annotate(_dup_key=key_expr).exclude(_dup_key__isnull=True).exclude(_dup_key__exact="")
         groups_qs = qs2.values("_dup_key").annotate(count=Count("id")).filter(count__gt=1).order_by("-count", "_dup_key")
@@ -375,65 +360,3 @@ class ClienteViewSet(viewsets.ModelViewSet):
         pagos = Pago.objects.filter(poliza__cliente=cliente).order_by("-id")
         serializer = PagoSerializer(pagos, many=True)
         return Response(serializer.data)
-
-    @action(detail=False, methods=["post"])
-    def crear_con_poliza(self, request):
-        data = request.data or {}
-        user = request.user
-        es_admin = user.is_superuser or (hasattr(user, 'perfil') and user.perfil.rol == 'ADMIN')
-
-        try:
-            with transaction.atomic():
-                poliza_data = data.get("poliza") or {}
-                
-                if es_admin:
-                    oficina_id_asignada = data.get("oficina") or poliza_data.get("oficina")
-                else:
-                    oficina_id_asignada = user.perfil.oficina.id if (hasattr(user, 'perfil') and user.perfil.oficina) else None
-
-                cliente = Cliente.objects.create(
-                    nombre=(data.get("nombre") or "").strip(),
-                    apellido=(data.get("apellido") or "").strip(),
-                    telefono=(data.get("telefono") or "").strip() or None,
-                    email=(data.get("email") or "").strip() or None,
-                    dni_cuit_cuil=(data.get("dni_cuit_cuil") or "").strip(),
-                    direccion=data.get("direccion", "").strip(),
-                    oficina_id=oficina_id_asignada,
-                )
-
-                oficina_poliza = oficina_id_asignada
-                if not es_admin and hasattr(user, 'perfil') and user.perfil.oficina:
-                     oficina_poliza = user.perfil.oficina.codigo
-
-                poliza = Poliza.objects.create(
-                    cliente=cliente,
-                    numero=poliza_data.get("numero"),
-                    compania=poliza_data.get("compania"),
-                    cobertura=poliza_data.get("cobertura"),
-                    patente=poliza_data.get("patente"),
-                    vehiculo=poliza_data.get("vehiculo"),
-                    anio=poliza_data.get("anio"),
-                    prima=poliza_data.get("prima") or Decimal("0.00"),
-                    primer_pago=poliza_data.get("primer_pago"),
-                    cantidad_cuotas=poliza_data.get("cantidad_cuotas") or 1,
-                    precio_cuota=poliza_data.get("precio_cuota") or Decimal("0.00"),
-                    oficina=oficina_poliza, 
-                )
-
-                primer_pago_dt = poliza.primer_pago
-                cantidad_cuotas = int(poliza.cantidad_cuotas or 1)
-                precio_cuota = poliza.precio_cuota or Decimal("0.00")
-
-                for i in range(cantidad_cuotas):
-                    fecha_venc = primer_pago_dt + relativedelta(months=i)
-                    Cuota.objects.create(
-                        poliza=poliza,
-                        numero_cuota=i + 1,
-                        monto=precio_cuota,
-                        fecha_vencimiento=fecha_venc.date(),
-                        pagado=False,
-                    )
-
-                return Response({"cliente": ClienteDetailSerializer(cliente).data}, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            return Response({"error": "Error al crear cliente y póliza.", "detalle": str(e)}, status=status.HTTP_400_BAD_REQUEST)

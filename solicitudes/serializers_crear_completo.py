@@ -278,6 +278,29 @@ class CrearCompletoSerializer(serializers.Serializer):
         nom = (solicitud.get("responsable_nombre") or solicitud.get("responsable") or "").strip()
         if not (nom or solicitud.get("responsable_empleado")):
             raise serializers.ValidationError({"solicitud": {"responsable_nombre": "Campo obligatorio."}})
+
+        # 🛡️ Póliza NUEVA: validamos los campos que en el modelo Poliza son
+        #    NOT NULL / obligatorios ANTES de tocar la base. Sin esto, un alta
+        #    por "subida rápida" (PDF) donde el lector no detectó el año/marca/
+        #    modelo mandaba anio=None → Poliza.anio es IntegerField() NOT NULL →
+        #    IntegrityError → 500 mudo (HTML). Ahora devolvemos 400 con detalle.
+        poliza = attrs.get("poliza", {})
+        if poliza.get("modo") == "nueva":
+            errores = {}
+            if poliza.get("anio") in (None, ""):
+                errores["anio"] = "El año del vehículo es obligatorio."
+            if not (poliza.get("marca") or "").strip():
+                errores["marca"] = "La marca es obligatoria."
+            if not (poliza.get("modelo") or "").strip():
+                errores["modelo"] = "El modelo es obligatorio."
+            if not (poliza.get("patente") or "").strip():
+                errores["patente"] = "La patente es obligatoria."
+            if not (poliza.get("compania") or "").strip():
+                errores["compania"] = "La compañía es obligatoria."
+            if not (poliza.get("cobertura") or "").strip():
+                errores["cobertura"] = "La cobertura es obligatoria."
+            if errores:
+                raise serializers.ValidationError({"poliza": errores})
         return attrs
 
     @transaction.atomic

@@ -1,5 +1,8 @@
 # solicitudes/views.py
+import logging
+
 from django.utils import timezone
+from django.db import IntegrityError
 
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
@@ -47,6 +50,9 @@ CLIENTE_DOC_FIELDS = {
     "pasaporte_frente": "archivo_pasaporte_frente",
     "pasaporte_dorso": "archivo_pasaporte_dorso",
 }
+
+
+logger = logging.getLogger(__name__)
 
 
 def _tarea_flag(s, key: str) -> bool:
@@ -143,10 +149,29 @@ class SolicitudSeguroViewSet(viewsets.ModelViewSet):
         ser = CrearCompletoSerializer(data=data, context={'request': request})
         ser.is_valid(raise_exception=True)
 
-        if not is_admin and ofi_id_empleado:
-            result = ser.save(oficina_id=ofi_id_empleado)
-        else:
-            result = ser.save()
+        # 🛡️ Envolvemos el save: si algo revienta a nivel base (IntegrityError,
+        #    p.ej. un campo NOT NULL que llegó vacío) devolvemos 400 con el
+        #    detalle REAL en JSON, en vez de un 500 con HTML que el front no
+        #    puede parsear (mostraba "detalle: undefined").
+        try:
+            if not is_admin and ofi_id_empleado:
+                result = ser.save(oficina_id=ofi_id_empleado)
+            else:
+                result = ser.save()
+        except IntegrityError as e:
+            logger.error("[crear_completo] IntegrityError: %s", e, exc_info=True)
+            return Response(
+                {"detail": "No se pudo crear la solicitud: faltan datos obligatorios "
+                           "o hay un valor inválido en la póliza/cliente.",
+                 "error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.error("[crear_completo] Error inesperado: %s", e, exc_info=True)
+            return Response(
+                {"detail": "Error al crear la solicitud.", "error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response(result, status=status.HTTP_201_CREATED)
 

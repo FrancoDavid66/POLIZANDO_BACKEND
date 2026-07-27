@@ -15,15 +15,18 @@ urlpatterns = [
     path('api/', include('clientes.urls')),
     path('api/', include('polizas.urls')),
 
-  
+
 
     path('api/', include('pagos.urls')),
     path('api/', include('siniestros.urls')),
     path('api/', include('balanzes.urls')),
 
     path('api/', include('solicitudes.urls')),
-  
+
     path('public/portal/', include('clientes.public_urls')),  # 🆕 Portal del asegurado
+
+    # 💳 PAGOS PÚBLICOS (Mercado Pago): webhook + pago desde el portal (sin login)
+    path('public/pagos/', include('pagos.public_urls')),
 
     path('api/notificaciones/', include('notificaciones.urls')),
     path('api/estadisticas/', include('estadisticas.urls')),

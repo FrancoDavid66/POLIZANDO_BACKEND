@@ -220,16 +220,12 @@ def crear_preferencia_portal(request, token):
         if email_cliente:
             preference_data["payer"] = {"email": email_cliente}
 
-        # back_urls: devolvemos al cliente a SU portal (con el token) tras pagar.
-        # Usamos la URL del portal (/#/portal/<token>) SIN auto_return: así MP no
-        # valida el fragmento "#" (que antes hacía rechazar la preferencia), y el
-        # cliente vuelve al portal tocando "Volver al sitio" y ve su cuota pagada.
+        # back_urls SIN "#" (MP valida la URL). Sin auto_return para no arriesgar rechazo.
         if front_base.startswith("https://"):
-            url_portal = f"{front_base}/#/portal/{token}"
             preference_data["back_urls"] = {
-                "success": url_portal,
-                "pending": url_portal,
-                "failure": url_portal,
+                "success": front_base,
+                "pending": front_base,
+                "failure": front_base,
             }
 
         # 5) Crear la preferencia en Mercado Pago

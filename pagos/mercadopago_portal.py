@@ -3,27 +3,30 @@
 Mercado Pago desde el PORTAL DEL ASEGURADO (público, sin login).
 
 El cliente entra por su link único (/#/portal/<token>) y paga una cuota.
-Público: se valida por el TOKEN del portal = Poliza.token_portal (UUID).
+Público: se valida por el TOKEN del portal = **Cliente.portal_token**
+(token_urlsafe, NO es UUID). Mismo campo que usa clientes/public_views.py.
 
 ⚠️ MODO PRUEBA / MONTO MANUAL: acepta un `monto` mandado desde el portal.
-🔑 Identifica la cuota por (token_portal + cuota_nro); no depende del id.
+🔑 Ubicación de la cuota (el JSON del portal NO manda id de cuota):
+   token → Cliente → sus pólizas → cuota por cuota_nro (+ poliza_id si viene).
 
-🔎 VERSIÓN CON DIAGNÓSTICO: toda la vista está envuelta en try/except que
-   DEVUELVE el detalle del error en el JSON ({"detail","error","tipo"}), para
-   verlo en la consola del navegador sin entrar a los logs de Railway. Cuando
-   funcione, se puede volver a la versión que oculta el error.
+Flujo:
+1) POST /public/pagos/portal/<token>/mp/crear-preferencia/
+   body: { "cuota_nro": <int>, "poliza_id": <int opcional>, "monto": <number> }
+2) Devuelve init_point → el cliente paga en Mercado Pago.
+3) Webhook (pagos/mercadopago_pagos.webhook) marca la cuota pagada.
 """
 import logging
 import traceback
 
 from django.conf import settings
-from django.shortcuts import get_object_or_404
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
+from clientes.models import Cliente
 from polizas.models import Poliza
 from .models import Cuota
 
@@ -31,7 +34,7 @@ log = logging.getLogger(__name__)
 
 
 def _get_sdk():
-    import mercadopago  # import adentro: si falta el paquete, lo capturamos como error claro
+    import mercadopago
     token = getattr(settings, "MP_ACCESS_TOKEN", "") or ""
     if not token.strip():
         raise RuntimeError("Falta configurar MP_ACCESS_TOKEN en Railway (Polizando).")
@@ -65,29 +68,59 @@ def _parse_monto(monto_raw, fallback):
 @permission_classes([AllowAny])
 def crear_preferencia_portal(request, token):
     """
-    Body: { "cuota_nro": <int>, "monto": <number> }  (o "cuota_id")
+    Body: { "cuota_nro": <int>, "poliza_id": <int opcional>, "monto": <number> }
     Devuelve: { preference_id, init_point, sandbox_init_point }
-    En error, devuelve {detail, error, tipo} para diagnóstico.
+    En error, devuelve {detail, error, tipo, traceback} para diagnóstico.
     """
     try:
-        # 1) Póliza por token del portal
-        poliza = get_object_or_404(
-            Poliza.objects.select_related("cliente"),
-            token_portal=token,
+        # 1) El token identifica al CLIENTE (Cliente.portal_token), NO a la póliza.
+        cli = (
+            Cliente.objects
+            .filter(portal_token=token)
+            .first()
         )
+        if cli is None:
+            return Response(
+                {"detail": "Link inválido o vencido."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-        # 2) Ubicar la cuota (cuota_id atajo, o cuota_nro dentro de la póliza)
+        # 2) Pólizas de ese cliente (las mismas que muestra el portal).
+        polizas_cli = list(
+            Poliza.objects.filter(cliente=cli)
+            .exclude(estado__in=["cancelada", "finalizada", "en_verificacion"])
+        )
+        if not polizas_cli:
+            return Response(
+                {"detail": "No tenés pólizas activas para pagar."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        poliza_ids = [p.id for p in polizas_cli]
+
+        # 3) Ubicar la cuota: por poliza_id (si vino) o por cuota_nro dentro de
+        #    las pólizas del cliente. También aceptamos cuota_id como atajo.
         cuota_id = request.data.get("cuota_id")
         cuota_nro = request.data.get("cuota_nro")
+        poliza_id = request.data.get("poliza_id")
 
         cuota = None
         if cuota_id:
-            cuota = Cuota.objects.filter(pk=cuota_id, poliza=poliza).first()
+            cuota = Cuota.objects.filter(pk=cuota_id, poliza_id__in=poliza_ids).first()
+
         if cuota is None and cuota_nro is not None and str(cuota_nro).strip() != "":
             try:
-                cuota = Cuota.objects.filter(poliza=poliza, cuota_nro=int(cuota_nro)).first()
+                nro = int(cuota_nro)
             except (TypeError, ValueError):
-                cuota = None
+                nro = None
+            if nro is not None:
+                qs = Cuota.objects.filter(poliza_id__in=poliza_ids, cuota_nro=nro)
+                if poliza_id:
+                    qs_p = qs.filter(poliza_id=poliza_id)
+                    cuota = qs_p.first() or qs.first()
+                else:
+                    # Sin poliza_id: si hay una sola póliza, es inequívoco.
+                    # Preferimos una cuota impaga de esa nro.
+                    cuota = qs.filter(pagado=False).first() or qs.first()
 
         if cuota is None:
             return Response(
@@ -101,7 +134,9 @@ def crear_preferencia_portal(request, token):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # 3) Monto (modo prueba: manual; si no, cuota.monto)
+        poliza = cuota.poliza
+
+        # 4) Monto (modo prueba: manual; si no, cuota.monto)
         monto = _parse_monto(request.data.get("monto"), cuota.monto)
         if monto <= 0:
             return Response(
@@ -114,10 +149,7 @@ def crear_preferencia_portal(request, token):
         if num_pol:
             titulo += f" · Póliza {num_pol}"
 
-        email_cliente = ""
-        cliente = getattr(poliza, "cliente", None)
-        if cliente:
-            email_cliente = (getattr(cliente, "email", "") or "").strip()
+        email_cliente = (getattr(cli, "email", "") or "").strip()
 
         base_back = _base_url_backend(request)
         front_base = _front_base()
@@ -149,9 +181,7 @@ def crear_preferencia_portal(request, token):
         if email_cliente:
             preference_data["payer"] = {"email": email_cliente}
 
-        # back_urls: SIN el "#" (MP valida la URL y el fragmento le cae mal).
-        # Mandamos la home del front; NO usamos auto_return para no arriesgar el
-        # rechazo de la preferencia si la URL no le gusta a MP.
+        # back_urls SIN "#" (MP valida la URL). Sin auto_return para no arriesgar rechazo.
         if front_base.startswith("https://"):
             preference_data["back_urls"] = {
                 "success": front_base,
@@ -159,13 +189,12 @@ def crear_preferencia_portal(request, token):
                 "failure": front_base,
             }
 
-        # 4) Crear la preferencia
+        # 5) Crear la preferencia en Mercado Pago
         sdk = _get_sdk()
         resp = sdk.preference().create(preference_data)
 
         body = resp.get("response", {}) or {}
         if resp.get("status") not in (200, 201) or "id" not in body:
-            # Error devuelto por Mercado Pago (ej. token inválido, campo mal).
             log.error("[MP-portal] MP no devolvió preferencia válida: %s", resp)
             return Response(
                 {
@@ -186,7 +215,6 @@ def crear_preferencia_portal(request, token):
         )
 
     except Exception as e:
-        # 🔎 Devolvemos el error REAL para verlo en la consola del navegador.
         log.exception("[MP-portal] 500 al crear preferencia: %s", e)
         return Response(
             {

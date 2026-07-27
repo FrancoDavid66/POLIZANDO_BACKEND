@@ -285,7 +285,7 @@ COBRO_TITULAR_NOMBRE = get_required_env("COBRO_TITULAR_NOMBRE")
 #    de PRUEBA, que empieza con "TEST-"; luego el de producción). Se carga en las
 #    variables de entorno de Railway (Polizando). Si falta, el backend NO arranca
 #    y avisa claro en los logs (mismo criterio que las otras credenciales).
-MP_ACCESS_TOKEN = get_required_env("APP_USR-4370643069287627-072700-96399202bcc395c1be343c59fd0a7e97-2540117240")
+MP_ACCESS_TOKEN = get_required_env("MP_ACCESS_TOKEN")
 # URL pública del backend (para armar la notification_url del webhook). Opcional:
 # si no está, se deduce del request. Ej: https://polizandobackend-production.up.railway.app
 MP_BACKEND_URL = os.getenv("MP_BACKEND_URL", "")

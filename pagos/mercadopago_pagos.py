@@ -305,6 +305,10 @@ def webhook(request):
             )
 
         log.info("[MP] Cuota %s marcada pagada por pago MP %s.", cuota_id, payment_id)
+
+        # --- 4) Avisar al cliente por WhatsApp (no rompe el webhook si falla) ---
+        _avisar_pago_whatsapp(cuota, monto)
+
         return Response({"ok": True, "cuota_id": cuota_id, "payment_id": payment_id}, status=status.HTTP_200_OK)
 
     except Cuota.DoesNotExist:
@@ -313,3 +317,50 @@ def webhook(request):
     except Exception as e:
         log.exception("[MP] Error aplicando pago %s a cuota %s: %s", payment_id, cuota_id, e)
         return Response({"ok": False, "error": str(e)}, status=status.HTTP_200_OK)
+
+
+def _avisar_pago_whatsapp(cuota, monto):
+    """
+    Manda un WhatsApp de confirmación al cliente cuando pagó una cuota online.
+    Reusa notificaciones.utils.mensajeria.enviar_whatsapp (UltraMsg por oficina).
+    NUNCA rompe el webhook: cualquier error se loguea y se ignora.
+    """
+    try:
+        poliza = getattr(cuota, "poliza", None)
+        cliente = getattr(poliza, "cliente", None) if poliza else None
+        if cliente is None:
+            return
+
+        numero = (
+            getattr(cliente, "telefono", "") or ""
+        ).strip()
+        if not numero:
+            log.info("[MP] Cliente sin teléfono, no se envía WhatsApp (cuota %s).", getattr(cuota, "id", "?"))
+            return
+
+        nombre = (getattr(cliente, "nombre", "") or "").strip().split(" ")[0] or "Hola"
+        try:
+            monto_txt = f"${float(monto):,.0f}".replace(",", ".")
+        except Exception:
+            monto_txt = ""
+
+        patente = (getattr(poliza, "patente", "") or "").strip()
+        veh = f" de tu {patente}" if patente else ""
+
+        mensaje = (
+            f"¡Hola {nombre}! 👋 Recibimos tu pago{(' de ' + monto_txt) if monto_txt else ''} "
+            f"de la cuota {cuota.cuota_nro}{veh}. ✅\n"
+            f"Ya figura como pagada en tu portal. ¡Gracias por confiar en Polizando! 🐐"
+        )
+
+        # oficina de la póliza (UltraMsg toma sus credenciales por oficina)
+        oficina = getattr(poliza, "oficina", None)
+
+        from notificaciones.utils.mensajeria import enviar_whatsapp
+        ok, info = enviar_whatsapp(numero, mensaje, oficina=oficina)
+        if ok:
+            log.info("[MP] WhatsApp de pago enviado a %s (cuota %s).", numero, cuota.id)
+        else:
+            log.warning("[MP] No se pudo enviar WhatsApp de pago (cuota %s): %s", cuota.id, info)
+    except Exception as e:
+        log.exception("[MP] Error enviando WhatsApp de pago: %s", e)

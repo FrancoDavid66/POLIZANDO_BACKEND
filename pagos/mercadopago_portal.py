@@ -63,6 +63,45 @@ def _parse_monto(monto_raw, fallback):
     return float(fallback) if fallback is not None else 0.0
 
 
+@api_view(["GET"])
+@authentication_classes([])          # público
+@permission_classes([AllowAny])
+def diagnostico_mp(request):
+    """
+    GET /public/pagos/mp/diag/
+    Diagnóstico SEGURO (no expone el token): dice si el backend VE la config
+    de Mercado Pago. Sirve para descartar problemas de variables de entorno.
+    Borrar este endpoint cuando el pago funcione.
+    """
+    import os
+
+    def _info(nombre):
+        # settings (lo que la app tiene resuelto) y os.environ (lo que llega al proceso)
+        val_settings = getattr(settings, nombre, None)
+        val_env = os.environ.get(nombre, None)
+        return {
+            "en_settings": bool(val_settings and str(val_settings).strip()),
+            "largo_settings": len(str(val_settings).strip()) if val_settings else 0,
+            "en_environ": bool(val_env and str(val_env).strip()),
+            "largo_environ": len(str(val_env).strip()) if val_env else 0,
+            "empieza": (str(val_settings or val_env)[:5] + "…") if (val_settings or val_env) else "",
+        }
+
+    # Además: listamos los nombres de env vars que contienen "MP" o "MERCADO"
+    import os as _os
+    relacionadas = sorted(
+        k for k in _os.environ.keys()
+        if "MP_" in k.upper() or "MERCADO" in k.upper()
+    )
+
+    return Response({
+        "MP_ACCESS_TOKEN": _info("MP_ACCESS_TOKEN"),
+        "MP_BACKEND_URL": _info("MP_BACKEND_URL"),
+        "MP_FRONT_URL": _info("MP_FRONT_URL"),
+        "env_vars_relacionadas": relacionadas,
+    })
+
+
 @api_view(["POST"])
 @authentication_classes([])          # público
 @permission_classes([AllowAny])

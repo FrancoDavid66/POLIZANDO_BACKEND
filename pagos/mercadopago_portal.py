@@ -2,37 +2,38 @@
 """
 Mercado Pago desde el PORTAL DEL ASEGURADO (público, sin login).
 
-El cliente entra por su link único (/public/portal/<token>/) y paga una cuota.
+El cliente entra por su link único (/#/portal/<token>) y paga una cuota.
 Como el portal es público (el cliente no tiene sesión), este endpoint NO exige
-autenticación: se valida por el TOKEN del portal, igual que el resto de
-/public/portal/.
+autenticación: se valida por el TOKEN del portal = Poliza.token_portal (UUID).
 
 ⚠️ MODO PRUEBA / MONTO MANUAL:
-Este endpoint acepta un `monto` mandado desde el portal. Sirve para probar el
-cobro mientras las cuotas todavía se crean sin monto. Cuando las cuotas ya
-nazcan con su monto real, se puede ignorar el `monto` del body y usar el de la
-cuota (queda comentado abajo dónde).
+Acepta un `monto` mandado desde el portal (mientras las cuotas se crean sin
+monto). Cuando las cuotas ya nazcan con monto real, se ignora el `monto` del
+body y se usa el de la cuota (ver comentario abajo).
+
+🔑 IDENTIFICACIÓN DE LA CUOTA SIN `id`:
+El JSON del portal no manda el id de cada cuota, así que NO dependemos de él.
+Identificamos la cuota por (token_portal de la póliza + cuota_nro). Igual
+aceptamos cuota_id si algún día viene, como atajo.
 
 Flujo:
-1) El portal hace POST /public/portal/<token>/mp/crear-preferencia/
-   body: { "cuota_id": <int>, "monto": <number> }
+1) POST /public/pagos/portal/<token>/mp/crear-preferencia/
+   body: { "cuota_nro": <int>, "monto": <number> }   (o { "cuota_id": <int>, ... })
 2) Devuelve init_point → el cliente paga en Mercado Pago.
 3) Mercado Pago pega al webhook (pagos/mercadopago_pagos.webhook) → marca pagada.
-
-El token se resuelve con la MISMA lógica que usa el portal para servir datos.
-Para no acoplarnos a una implementación puntual, intentamos resolver el cliente
-por el token de varias formas conocidas y, si no se puede, devolvemos 404.
 """
 import logging
 
 import mercadopago
 from django.conf import settings
+from django.shortcuts import get_object_or_404
 
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
+from polizas.models import Poliza
 from .models import Cuota
 
 log = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ def _base_url_backend(request) -> str:
     return request.build_absolute_uri("/").rstrip("/")
 
 
-def _front_portal_url(request, token: str) -> str:
+def _front_portal_url(token: str) -> str:
     """A dónde vuelve el cliente después de pagar (su propio portal)."""
     front = (getattr(settings, "MP_FRONT_URL", "") or "").strip().rstrip("/")
     if front:
@@ -64,65 +65,50 @@ def _front_portal_url(request, token: str) -> str:
     return ""
 
 
-def _cuota_pertenece_al_token(cuota: Cuota, token: str) -> bool:
-    """
-    Verifica que la cuota sea de una póliza accesible por ese token de portal.
-
-    El portal identifica al cliente por un token en la póliza o el cliente.
-    Chequeamos los campos más probables sin romper si alguno no existe.
-    Si tu modelo usa otro nombre de campo para el token, agregalo a la lista
-    CAMPOS_TOKEN de abajo.
-    """
-    token = (token or "").strip()
-    if not token:
-        return False
-
-    poliza = getattr(cuota, "poliza", None)
-    if poliza is None:
-        return False
-
-    cliente = getattr(poliza, "cliente", None)
-
-    # Nombres de campo candidatos donde puede vivir el token del portal.
-    CAMPOS_TOKEN = ("portal_token", "token_portal", "token", "public_token", "uuid")
-
-    for obj in (poliza, cliente):
-        if obj is None:
-            continue
-        for campo in CAMPOS_TOKEN:
-            val = getattr(obj, campo, None)
-            if val and str(val).strip() == token:
-                return True
-    return False
+def _parse_monto(monto_raw, fallback):
+    """Normaliza el monto que viene del portal ('47.000' / '47000' / 47000)."""
+    if monto_raw is not None and str(monto_raw).strip() != "":
+        try:
+            if isinstance(monto_raw, str):
+                return float(monto_raw.replace(".", "").replace(",", "."))
+            return float(monto_raw)
+        except (TypeError, ValueError):
+            pass
+    return float(fallback) if fallback is not None else 0.0
 
 
 @api_view(["POST"])
+@authentication_classes([])          # público: sin auth
 @permission_classes([AllowAny])
 def crear_preferencia_portal(request, token):
     """
-    Body: { "cuota_id": <int>, "monto": <number opcional en modo prueba> }
+    Body: { "cuota_nro": <int>, "monto": <number> }
+    (también acepta "cuota_id" como atajo si algún día el portal lo manda)
     Devuelve: { preference_id, init_point, sandbox_init_point }
     """
+    # 1) El token identifica la póliza (Poliza.token_portal). 404 si no existe.
+    poliza = get_object_or_404(
+        Poliza.objects.select_related("cliente"),
+        token_portal=token,
+    )
+
+    # 2) Ubicar la cuota: por cuota_id (atajo) o por cuota_nro dentro de ESA póliza.
     cuota_id = request.data.get("cuota_id")
-    monto_manual = request.data.get("monto")
+    cuota_nro = request.data.get("cuota_nro")
 
-    if not cuota_id:
-        return Response({"detail": "Falta cuota_id."}, status=status.HTTP_400_BAD_REQUEST)
+    cuota = None
+    if cuota_id:
+        cuota = Cuota.objects.filter(pk=cuota_id, poliza=poliza).first()
+    if cuota is None and cuota_nro is not None and str(cuota_nro).strip() != "":
+        try:
+            cuota = Cuota.objects.filter(poliza=poliza, cuota_nro=int(cuota_nro)).first()
+        except (TypeError, ValueError):
+            cuota = None
 
-    try:
-        cuota = (
-            Cuota.objects
-            .select_related("poliza", "poliza__cliente")
-            .get(pk=cuota_id)
-        )
-    except Cuota.DoesNotExist:
-        return Response({"detail": "La cuota no existe."}, status=status.HTTP_404_NOT_FOUND)
-
-    # 🔒 Seguridad: la cuota tiene que ser de una póliza de ESE token de portal.
-    if not _cuota_pertenece_al_token(cuota, token):
+    if cuota is None:
         return Response(
-            {"detail": "Esta cuota no corresponde a tu portal."},
-            status=status.HTTP_403_FORBIDDEN,
+            {"detail": "No encontramos esa cuota en tu póliza."},
+            status=status.HTTP_404_NOT_FOUND,
         )
 
     if cuota.pagado:
@@ -131,27 +117,15 @@ def crear_preferencia_portal(request, token):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # ── Monto ─────────────────────────────────────────────────────────────
-    # MODO PRUEBA: si viene monto manual, lo usamos. Si no, el de la cuota.
-    # PARA PRODUCCIÓN (cuando las cuotas ya tengan monto real): borrá el bloque
-    # del monto_manual y dejá solo:  monto = cuota.monto
-    monto = None
-    if monto_manual is not None and str(monto_manual).strip() != "":
-        try:
-            monto = float(str(monto_manual).replace(".", "").replace(",", ".")) \
-                if isinstance(monto_manual, str) else float(monto_manual)
-        except (TypeError, ValueError):
-            monto = None
-    if monto is None:
-        monto = float(cuota.monto) if cuota.monto is not None else 0.0
-
+    # 3) Monto ── MODO PRUEBA: usa el monto manual; si no viene, el de la cuota.
+    #    PRODUCCIÓN: borrá el uso de monto_manual y dejá  monto = float(cuota.monto or 0)
+    monto = _parse_monto(request.data.get("monto"), cuota.monto)
     if monto <= 0:
         return Response(
             {"detail": "El monto a pagar no es válido. Ingresá un importe mayor a 0."},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    poliza = cuota.poliza
     num_pol = getattr(poliza, "numero_poliza", "") or ""
     titulo = f"Cuota {cuota.cuota_nro}"
     if num_pol:
@@ -163,7 +137,7 @@ def crear_preferencia_portal(request, token):
         email_cliente = (getattr(cliente, "email", "") or "").strip()
 
     base_back = _base_url_backend(request)
-    url_portal = _front_portal_url(request, token)
+    url_portal = _front_portal_url(token)
 
     preference_data = {
         "items": [
@@ -175,6 +149,7 @@ def crear_preferencia_portal(request, token):
                 "currency_id": "ARS",
             }
         ],
+        # external_reference = id real de la cuota → el webhook la marca por acá.
         "external_reference": str(cuota.id),
         "notification_url": f"{base_back}/public/pagos/mp/webhook/",
         "metadata": {
@@ -201,7 +176,7 @@ def crear_preferencia_portal(request, token):
         sdk = _get_sdk()
         resp = sdk.preference().create(preference_data)
     except Exception as e:
-        log.exception("[MP-portal] Error creando preferencia para cuota %s: %s", cuota_id, e)
+        log.exception("[MP-portal] Error creando preferencia (cuota %s): %s", cuota.id, e)
         return Response(
             {"detail": "No se pudo generar el link de pago.", "error": str(e)},
             status=status.HTTP_502_BAD_GATEWAY,
